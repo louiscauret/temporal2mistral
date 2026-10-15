@@ -1,51 +1,55 @@
 # temporal2mistral
 
-Migrate Temporal Python workflows to [Mistral Workflows](https://docs.mistral.ai/studio/workflows/getting-started/overview).
+[![CI](https://github.com/louiscauret/temporal2mistral/actions/workflows/ci.yml/badge.svg)](https://github.com/louiscauret/temporal2mistral/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12%20|%203.13-3776AB?logo=python&logoColor=white)
+![Temporal](https://img.shields.io/badge/temporalio-1.29-141414?logo=temporal&logoColor=white)
+![Mistral Workflows](https://img.shields.io/badge/mistralai--workflows-3.15-FA520F?logo=mistralai&logoColor=white)
+![LibCST](https://img.shields.io/badge/built%20with-LibCST-4B8BBE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+![Status](https://img.shields.io/badge/status-alpha-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-`temporal2mistral` is a codemod plus a migration report. It rewrites code written for the
-[Temporal Python SDK](https://github.com/temporalio/sdk-python) (`temporalio`) into code for the
-Mistral Workflows SDK (`mistralai-workflows`), and lists, file by file and line by line, everything
-that still needs a human decision.
+Move Python code from the [Temporal SDK](https://github.com/temporalio/sdk-python) to
+[Mistral Workflows](https://docs.mistral.ai/studio/workflows/getting-started/overview).
+
+It rewrites what can be rewritten safely and gives you a report of the rest, file by file and line by line.
 
 ```console
-$ temporal2mistral check ./src           # what would change, what needs you
-$ temporal2mistral apply ./src --diff    # preview the rewrite
+$ temporal2mistral check ./src           # report only, writes nothing
+$ temporal2mistral apply ./src --diff    # show the rewrite
 $ temporal2mistral apply ./src           # rewrite in place (commit first)
 ```
 
-> Status: alpha. Built against `temporalio` 1.29 and `mistralai-workflows` 3.15 (Mistral Workflows is
-> in public preview and its API may still change). Not affiliated with Temporal Technologies or Mistral AI.
+Alpha. Tested against `temporalio` 1.29 and `mistralai-workflows` 3.15. Mistral Workflows is in public
+preview, so its API can still move. This project is not affiliated with Temporal Technologies or Mistral AI.
 
-## Why a tool for this?
+## Why not search and replace?
 
-Mistral Workflows runs on Temporal, so the execution model is the same: deterministic workflows,
-activities for side effects, signals, queries, updates, child workflows, continue-as-new. Most of the
-API maps one to one. Three differences make a search-and-replace go wrong:
+Mistral Workflows runs on Temporal, so most of the API maps one to one. A few things don't:
 
-1. **Activity options live on the definition.** Temporal passes timeouts and retry policies at every
-   call (`workflow.execute_activity(fn, x, start_to_close_timeout=...)`); Mistral declares them once
-   (`@activity(start_to_close_timeout=...)`) and the activity is called directly (`await fn(x)`). The
-   call sites are often in another module, so the tool indexes the whole project first and moves the
-   options across files.
-2. **Inputs and outputs are JSON schemas.** Mistral builds a pydantic model from every signature:
-   all parameters and return types must be annotated, activities must be `async def` module-level
-   functions, query and update handlers must return a value, and child workflows / continue-as-new
-   take a pydantic model rather than positional arguments.
-3. **Different defaults.** A Mistral workflow is cancelled after **1 hour** unless `execution_timeout`
-   is set (Temporal: no limit), and activities retry **3 times** (Temporal: forever).
+- Temporal sets activity timeouts and retries at each call
+  (`workflow.execute_activity(fn, x, start_to_close_timeout=...)`). Mistral sets them once on the
+  definition (`@activity(start_to_close_timeout=...)`) and you call the activity directly
+  (`await fn(x)`). The call is usually in a different module from the definition, so the tool scans
+  the whole project before rewriting anything.
+- Mistral builds a JSON schema from every signature. Parameters and return types must be annotated,
+  activities must be module-level `async def` functions, query and update handlers must return
+  something, and child workflows and `continue_as_new` take a single pydantic model.
+- The defaults differ. A Mistral workflow is cancelled after 1 hour unless you set
+  `execution_timeout` (Temporal has no limit), and activities retry 3 times (Temporal retries forever).
 
-## Installation
+## Install
 
 ```console
-pip install temporal2mistral                 # once published on PyPI
-pip install "temporal2mistral[mistral]"      # + the Mistral SDK, for --import-check
+pip install temporal2mistral                 # not on PyPI yet
+pip install "temporal2mistral[mistral]"      # with the Mistral SDK, for --import-check
 ```
 
-From source: `pip install -e ".[test,mistral]"`. Python 3.10+ (the Mistral SDK itself needs 3.12+).
+From a clone: `pip install -e ".[test,mistral]"`. Needs Python 3.10+. The Mistral SDK itself needs 3.12+.
 
 ## Example
 
-Temporal:
+Before:
 
 ```python
 @activity.defn
@@ -87,7 +91,7 @@ class GreetingWorkflow:
         return await compose_greeting(ComposeGreetingInput("Hello", name))
 ```
 
-and the report (`temporal2mistral check hello.py`):
+And `temporal2mistral check hello.py` prints:
 
 ```text
 hello.py
@@ -105,13 +109,13 @@ hello.py
 1 file(s) converted out of 1 using temporalio (1 scanned): 0 error(s), 2 warning(s), 4 info(s).
 ```
 
-Run your formatter (ruff, black, isort) afterwards: the tool writes correct code, not pretty imports.
+The output is correct but the imports aren't sorted, so run ruff, black or isort on it afterwards.
 
-## What is converted
+## What gets converted
 
 | Temporal | Mistral |
 |---|---|
-| `@workflow.defn`, `@workflow.defn(name=..., sandboxed=False)` | `@workflow.define(name=..., enforce_determinism=False)` — the name defaults to the class name, as on Temporal |
+| `@workflow.defn`, `@workflow.defn(name=..., sandboxed=False)` | `@workflow.define(name=..., enforce_determinism=False)`. The name defaults to the class name, as on Temporal |
 | `@workflow.run` | `@workflow.entrypoint` |
 | `@workflow.signal`, `@workflow.query`, `@workflow.update` (with `name=`, `description=`) | `@workflow.signal()`, `@workflow.query()`, `@workflow.update()` |
 | `workflow.wait_condition`, `sleep`, `now`, `uuid4`, `random`, `unsafe.imports_passed_through` | same names on `mistralai.workflows.workflow` |
@@ -119,25 +123,29 @@ Run your formatter (ruff, black, isort) afterwards: the tool writes correct code
 | `@activity.defn`, `@activity.defn(name=...)` | `@activity(name=..., start_to_close_timeout=..., heartbeat_timeout=..., retry_policy_max_attempts=..., retry_policy_backoff_coefficient=...)` |
 | `workflow.execute_activity(fn, arg)` / `args=[a, b]` | `await fn(arg)` / `await fn(a, b)` |
 | `workflow.start_activity(fn, arg)` | `asyncio.create_task(fn(arg))` |
-| `workflow.execute_local_activity(...)` | regular activity call (reported) |
-| synchronous `def` activity | `async def` running the original body in `asyncio.to_thread` (or plain `async def` with `--sync-activities async`) |
+| `workflow.execute_local_activity(...)` | a regular activity call (reported) |
+| synchronous `def` activity | `async def` that runs the original body with `asyncio.to_thread` (or a plain `async def` with `--sync-activities async`) |
 | `activity.heartbeat(...)` | `activity_heartbeat(...)` |
 | `workflow.execute_child_workflow(Child.run, x, id=..., execution_timeout=..., parent_close_policy=...)` | `workflow.execute_workflow(Child, params=..., execution_id=..., execution_timeout=..., parent_close_policy=...)` |
 | `workflow.start_child_workflow(...)` | `workflow.execute_workflow(..., wait=False)` |
 | `workflow.continue_as_new(x)` | `workflow.continue_as_new(params)` |
 | `-> NoReturn` / `-> Never` | `-> None` |
-| missing `-> None` on handlers and activities that return nothing | added |
-| any other `workflow.X` / `activity.X` (`logger`, `info()`, `patched()`, `all_handlers_finished()`...) | kept as `temporal_workflow.X` / `temporal_activity.X` through `from temporalio import workflow as temporal_workflow` — it works because Mistral workers run on Temporal |
+| no return annotation on a handler or activity that returns nothing | `-> None` added |
+| any other `workflow.X` / `activity.X` (`logger`, `info()`, `patched()`, `all_handlers_finished()`...) | `temporal_workflow.X` / `temporal_activity.X`, imported with `from temporalio import workflow as temporal_workflow`. This works because Mistral workers run on Temporal |
 
-**Activity options.** Timeouts and retries are collected from every call site in the project, including
-module-level constants such as `RETRY = RetryPolicy(maximum_attempts=3)`. When call sites disagree,
-the most permissive value is kept and reported. `schedule_to_close_timeout` is used as
-`start_to_close_timeout` when it is the only timeout. Temporal's unlimited retries are preserved as
-`retry_policy_max_attempts=0` unless you pass `--mistral-retry-defaults`.
+### Activity options
 
-**Workflow inputs.** Mistral passes a single pydantic model to child workflows and to
-`continue_as_new`. When the target's entrypoint takes exactly one pydantic model, the argument is passed
-as is; otherwise a small model is generated next to the caller:
+Timeouts and retries are collected from every call site in the project, including module-level
+constants like `RETRY = RetryPolicy(maximum_attempts=3)`. If two call sites disagree, the tool keeps
+the most permissive value and tells you. If `schedule_to_close_timeout` is the only timeout, it becomes
+`start_to_close_timeout`. Temporal's unlimited retries become `retry_policy_max_attempts=0`, unless you
+pass `--mistral-retry-defaults`.
+
+### Workflow inputs
+
+Child workflows and `continue_as_new` take one pydantic model on Mistral. If the target's entrypoint
+already takes a single pydantic model, the argument is passed through. Otherwise the tool writes a small
+model next to the caller:
 
 ```python
 class ComposeGreetingWorkflowParams(BaseModel):
@@ -151,27 +159,27 @@ return await workflow.execute_workflow(
 )
 ```
 
-The child still validates its input against its own annotations (dataclasses work).
+The child still validates its input against its own annotations, so dataclasses keep working.
 
-## What stays with you
+## What you still have to do
 
-These are reported, never guessed:
+The tool reports these and leaves the code alone:
 
-- **Worker and client code.** `Worker(...)` becomes `await run_worker([...workflows])` (activities are
-  registered automatically), and starting, signalling or querying workflows goes through the Mistral
-  API (`Mistral(api_key=...).workflows.execute_workflow(workflow_identifier=..., input={...})`). The
-  report lists every place and gives the `run_worker` call to write.
-- **Class-based activities** (`execute_activity_method`): Mistral activities are module-level functions;
-  share clients with `Depends(...)` instead.
-- **`@workflow.init`, update validators, dynamic workflows and handlers, Nexus, asynchronous activity
-  completion**, and query/update handlers that return nothing.
-- **Types without a JSON schema** (plain classes serialised by a custom Temporal payload converter).
-- **Execution timeouts**: every workflow gets a warning until you set `execution_timeout` (or pass
-  `--execution-timeout 30d` to set it everywhere).
-- **Running workflows**: workflows that are already running on your Temporal cluster cannot move; let
-  them finish there and start new executions on Mistral.
+- Worker and client code. `Worker(...)` becomes `await run_worker([...workflows])`, and activities are
+  registered automatically. Starting, signalling and querying workflows goes through the Mistral API
+  (`Mistral(api_key=...).workflows.execute_workflow(workflow_identifier=..., input={...})`). The report
+  points at each place and gives you the `run_worker` call.
+- Class-based activities (`execute_activity_method`). Mistral activities are module-level functions.
+  Use `Depends(...)` to share clients.
+- `@workflow.init`, update validators, dynamic workflows and handlers, Nexus, asynchronous activity
+  completion, and query or update handlers that return nothing.
+- Types with no JSON schema, such as plain classes that relied on a custom Temporal payload converter.
+- Execution timeouts. Every workflow gets a warning until you set `execution_timeout`, or you can pass
+  `--execution-timeout 30d` to set it on all of them.
+- Workflows already running on your Temporal cluster. They can't be moved: let them finish there and
+  start new executions on Mistral.
 
-## Commands and options
+## Options
 
 ```text
 temporal2mistral check PATH... [--fail-on error|warning|never]
@@ -187,7 +195,7 @@ temporal2mistral apply PATH... [--diff | --out DIR]
   --format text|json             --report FILE writes the report to a file
 ```
 
-`check` exits with status 1 when errors are found, so it fits in CI:
+`check` exits with status 1 when it finds errors, so you can run it in CI:
 
 ```console
 temporal2mistral check src --format json --report migration-report.json
@@ -195,14 +203,19 @@ temporal2mistral check src --format json --report migration-report.json
 
 ### `--import-check`
 
-Static analysis cannot see everything (forward references in input types, third-party types without
-a schema...). With `--import-check`, every converted module is imported, in a subprocess, from a
-converted copy of the project with `mistralai-workflows` installed. Importing runs all of Mistral's
-definition-time validation, and any rejection is reported as `T2M090` with the SDK's own message.
-When the original module does not import either (missing dependency), the module is skipped (`T2M091`).
-This executes your project's top-level code.
+Some problems only show up when the code runs: forward references in input types, third-party types
+without a schema, and so on. With `--import-check`, each converted module is imported in a subprocess,
+from a converted copy of the project, with `mistralai-workflows` installed. Mistral validates
+definitions at import time, so anything it rejects is reported as `T2M090` with the SDK's own message.
+If the original module doesn't import either (a missing dependency, for example), it is skipped and
+reported as `T2M091`.
+
+Be aware that this runs your project's top-level code.
 
 ## Diagnostics
+
+Errors mean the converted code won't work until someone fixes it. Warnings mean it works but may behave
+differently. Infos record what was changed.
 
 | Rule | Severity | Meaning |
 |---|---|---|
@@ -245,57 +258,54 @@ This executes your project's top-level code.
 | T2M090 | error | The Mistral SDK rejects the converted module at import time |
 | T2M091 | info | Module not import-checked: the original does not import in this environment |
 
-Errors mean the converted code will not work until someone fixes it; warnings mean it works but may
-behave differently; infos record what was done.
+## Tested on temporalio/samples-python
 
-## Validation on temporalio/samples-python
-
-The test corpus is Temporal's official [Python samples](https://github.com/temporalio/samples-python)
-(commit `b0e4d84`, 9 October 2026): 734 Python files outside `tests/`, 236 of them defining workflows
-or activities.
+I test against Temporal's official [Python samples](https://github.com/temporalio/samples-python)
+(commit `b0e4d84`, 9 October 2026): 734 Python files outside `tests/`, 236 of which define workflows or
+activities.
 
 | | |
 |---|---:|
 | Modules converted | 236 |
-| Converted modules that do not compile | 0 |
-| Modules importable in the test environment (dependencies installed) | 115 |
+| Converted modules that don't compile | 0 |
+| Modules importable here (dependencies installed) | 115 |
 | … accepted by `mistralai-workflows` 3.15 at import | 108 |
-| … with no error diagnostic, accepted by the SDK | **86 / 86** |
-| … rejected by the SDK without an error diagnostic | **0** |
+| … with no error diagnostic, accepted by the SDK | 86 / 86 |
+| … rejected by the SDK with no error diagnostic | 0 |
 
-The remaining 121 modules depend on optional integrations (OpenAI Agents, LangGraph, Strands, Google
-ADK, boto3...) that were not installed; they were converted but not import-checked. The 7 rejected
-modules all carry error diagnostics: a plain class used as input (`T2M006`), an update handler
-returning `None` (`T2M015`), and five modules whose input types are recursive or forward-referenced,
-already flagged for `@workflow.init` (`T2M012`) or a dynamic activity call (`T2M032`);
-`--import-check` adds the SDK's exact message for those (`T2M090`).
+The other 121 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
+Strands, Google ADK, boto3...). They were converted but not import-checked. All 7 rejected modules
+already have error diagnostics: one uses a plain class as input (`T2M006`), one has an update handler
+that returns `None` (`T2M015`), and five have recursive or forward-referenced input types and were
+already flagged for `@workflow.init` (`T2M012`) or a dynamic activity call (`T2M032`). For those,
+`--import-check` adds the SDK's exact message (`T2M090`).
 
-Reproduce with `python scripts/validate_corpus.py path/to/samples-python --out /tmp/converted`.
-The errors found on the samples are listed in [docs/samples-python-errors.txt](docs/samples-python-errors.txt).
+To reproduce: `python scripts/validate_corpus.py path/to/samples-python --out /tmp/converted`.
+The full list of errors on the samples is in [docs/samples-python-errors.txt](docs/samples-python-errors.txt).
 
-Beyond imports, `tests/test_sdk_validation.py` runs a converted workflow (child workflow, sync and async
-activities, retry policy, signal/query/update) on the Mistral SDK's local mode, and
-`tests/test_e2e_temporal.py` runs one on Temporal's test server through the Mistral SDK's test worker
-(this one needs to download the test server, so it runs in CI).
+Two more tests go beyond imports. `tests/test_sdk_validation.py` runs a converted workflow (child
+workflow, sync and async activities, retry policy, signal, query and update) in the Mistral SDK's local
+mode. `tests/test_e2e_temporal.py` runs one on Temporal's test server through the Mistral SDK's test
+worker. That one downloads the test server, so it runs in CI.
 
 ## Development
 
 ```console
 pip install -e ".[test,mistral]" ruff
-pytest                                   # SDK tests run when mistralai-workflows is installed
+pytest                                   # the SDK tests run when mistralai-workflows is installed
 T2M_SAMPLES=/path/to/samples-python pytest
 ruff check . && ruff format src tests scripts
 ```
 
-How the code is organised, and the style rules, are in [CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how the code is organised and the style rules.
 
 ## Roadmap
 
 - Rewrite simple worker entry points to `run_worker([...])`.
-- Rewrite `client.execute_workflow(...)` / signal / query calls to the Mistral API client.
-- Convert class-based activities that only hold clients to module-level functions with `Depends`.
-- Optional conversion of input dataclasses to pydantic models.
+- Rewrite `client.execute_workflow(...)` and signal/query calls to the Mistral API client.
+- Turn class-based activities that only hold clients into module-level functions using `Depends`.
+- Optionally convert input dataclasses to pydantic models.
 
 ## License
 
-MIT
+[MIT](LICENSE)

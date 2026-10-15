@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Louis", email = "louiscauret@gmail.com" }]
+authors = [{ name = "Louis Cauret", email = "louiscauret@gmail.com" }]
 keywords = ["temporal", "mistral", "workflows", "codemod", "migration", "libcst"]
 classifiers = [
     "Development Status :: 3 - Alpha",

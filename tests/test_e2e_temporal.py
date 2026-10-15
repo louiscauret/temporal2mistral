@@ -80,9 +80,27 @@ def converted_module(tmp_path: Path):
         sys.modules.pop("e2e_greeting", None)
 
 
+def _registered_activities_not_added_by_test_worker() -> list:
+    """Every activity the Mistral SDK registered (the converted ones and its internal ones),
+    minus the event activities `create_test_worker` adds itself: Temporal refuses duplicate names."""
+    from mistralai.workflows.core.activity import get_all_temporal_activities
+    from mistralai.workflows.testing import test_worker
+    from temporalio.activity import _Definition
+
+    added_by_test_worker = {
+        _Definition.must_from_callable(getattr(test_worker, name)).name
+        for name in dir(test_worker)
+        if name.startswith(("_emit_", "_persist_")) and _Definition.from_callable(getattr(test_worker, name))
+    }
+    return [
+        fn
+        for fn in get_all_temporal_activities()
+        if _Definition.must_from_callable(fn).name not in added_by_test_worker
+    ]
+
+
 async def test_signal_child_and_activity_on_temporal(converted_module) -> None:
     from mistralai.workflows import config
-    from mistralai.workflows.core.activity import get_all_temporal_activities
     from mistralai.workflows.testing.test_worker import create_test_worker
     from temporalio.testing import WorkflowEnvironment
 
@@ -97,7 +115,7 @@ async def test_signal_child_and_activity_on_temporal(converted_module) -> None:
         async with create_test_worker(
             env,
             workflows=[m.E2EGreetingWorkflow, m.E2EChildWorkflow],
-            activities=get_all_temporal_activities(),
+            activities=_registered_activities_not_added_by_test_worker(),
         ):
             handle = await env.client.start_workflow(
                 "E2EGreetingWorkflow",

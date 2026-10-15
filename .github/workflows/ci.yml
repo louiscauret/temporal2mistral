@@ -9,12 +9,13 @@ jobs:
   unit:
     name: Unit tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[test]" ruff
@@ -25,9 +26,11 @@ jobs:
   sdk:
     name: Mistral SDK validation + end-to-end on Temporal
     runs-on: ubuntu-latest
+    # A stuck workflow would otherwise keep the job running for GitHub's default of 6 hours
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: pip install -e ".[test,mistral]"
@@ -39,7 +42,7 @@ jobs:
           T2M_SAMPLES: /tmp/samples-python
       - name: Convert and validate the whole samples repository
         run: python scripts/validate_corpus.py /tmp/samples-python --out /tmp/converted --json corpus.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: corpus-validation

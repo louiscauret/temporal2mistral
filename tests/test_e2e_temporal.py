@@ -6,6 +6,7 @@ test server is downloaded on first use). Skipped otherwise; it runs in CI.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 import textwrap
@@ -99,7 +100,7 @@ def _registered_activities_not_added_by_test_worker() -> list:
     ]
 
 
-async def test_signal_child_and_activity_on_temporal(converted_module) -> None:
+async def test_signal_child_and_activity_on_temporal(converted_module, monkeypatch) -> None:
     from mistralai.workflows import config
     from mistralai.workflows.testing.test_worker import create_test_worker
     from temporalio.testing import WorkflowEnvironment
@@ -110,6 +111,11 @@ async def test_signal_child_and_activity_on_temporal(converted_module) -> None:
         pytest.skip(f"Temporal test server unavailable: {exc}")
 
     config.worker.deployment_name = "test-task-queue"
+    # The SDK tags workflows with an `OtelTraceId` search attribute that the test server does not know:
+    # every workflow task would be rejected and the workflow would never finish. The SDK's own tests mock it too.
+    monkeypatch.setattr(
+        "mistralai.workflows.core.tracing.utils.temporalio.workflow.upsert_search_attributes", lambda *args: None
+    )
     m = converted_module
     async with env:
         async with create_test_worker(
@@ -124,6 +130,6 @@ async def test_signal_child_and_activity_on_temporal(converted_module) -> None:
                 task_queue="test-task-queue",
             )
             await handle.signal("approve", {})
-            result = await handle.result()
+            result = await asyncio.wait_for(handle.result(), timeout=60)  # fail instead of hanging forever
     value = result["result"] if isinstance(result, dict) and "result" in result else result
     assert value == "Hello, Louis!"

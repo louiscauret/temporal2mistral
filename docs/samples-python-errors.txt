@@ -1,0 +1,210 @@
+batch_sliding_window/batch_workflow.py
+    41  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+batch_sliding_window/record_loader_activity.py
+    36  ERROR   T2M030  Activity method `get_record_count` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    45  ERROR   T2M030  Activity method `get_records` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+
+batch_sliding_window/sliding_window_workflow.py
+    92  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+bedrock/basic/workflows.py
+    15  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+bedrock/entity/workflows.py
+    60  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+    80  ERROR   T2M030  `workflow.start_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+   109  ERROR   T2M030  `workflow.start_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+bedrock/shared/activities.py
+    14  ERROR   T2M030  Activity method `prompt_bedrock` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+
+bedrock/signals_and_queries/workflows.py
+    50  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+    62  ERROR   T2M030  `workflow.start_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+custom_converter/workflow.py
+    10  ERROR   T2M006  `GreetingInput` (parameter `input` of `run`) is a plain class: Mistral cannot build a JSON schema for it
+               -> Make it a dataclass or a pydantic model (Temporal accepted it through a custom payload converter).
+    10  ERROR   T2M006  `GreetingOutput` (return type of `run`) is a plain class: Mistral cannot build a JSON schema for it
+               -> Make it a dataclass or a pydantic model (Temporal accepted it through a custom payload converter).
+
+deepagents_plugin/human_in_the_loop/workflow.py
+    80  ERROR   T2M015  Update handler `resume` returns nothing; Mistral requires update handlers to return a value
+               -> Return something meaningful (e.g. the new state, or a bool) and annotate it.
+    85  ERROR   T2M013  Validator `validate_resume` of update `resume` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+dsl/activities.py
+     5  ERROR   T2M030  Activity method `activity1` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    10  ERROR   T2M030  Activity method `activity2` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    15  ERROR   T2M030  Activity method `activity3` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    20  ERROR   T2M030  Activity method `activity4` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    25  ERROR   T2M030  Activity method `activity5` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+
+dsl/workflow.py
+    67  ERROR   T2M032  `stmt.activity.name` is not an activity defined in the converted project
+               -> If it comes from another package, convert that package too or wrap it in a Mistral `@activity`.
+
+google_adk_agents/chatbot/workflows/chatbot_workflow.py
+    65  ERROR   T2M013  Validator `validate_message` of update `message` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+google_adk_agents/streaming/workflows/streaming_workflow.py
+    13  ERROR   T2M012  `@workflow.init` on `StreamingAgentWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+google_genai/streaming/workflow.py
+    24  ERROR   T2M012  `@workflow.init` on `StreamingWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+hello/hello_activity_method.py
+    19  ERROR   T2M030  Activity method `do_database_thing` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    28  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+hello/hello_async_activity_completion.py
+    21  ERROR   T2M030  Activity method `compose_greeting` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+    37  ERROR   T2M062  `activity.raise_complete_async` (asynchronous activity completion) is not supported by Mistral
+               -> Turn the activity into a workflow waiting for a signal or update instead.
+    62  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+hello_nexus/caller/workflows.py
+    15  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+langfuse_tracing/ticket_triage/workflows.py
+    85  ERROR   T2M013  Validator `approve_validator` of update `approve` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+message_passing/introduction/workflows.py
+    87  ERROR   T2M013  Validator `validate_language` of update `set_language` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+message_passing/safe_message_handlers/workflow.py
+    69  ERROR   T2M012  `@workflow.init` on `ClusterManagerWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+   150  ERROR   T2M015  Update handler `delete_job` returns nothing; Mistral requires update handlers to return a value
+               -> Return something meaningful (e.g. the new state, or a bool) and annotate it.
+
+message_passing/update_with_start/lazy_initialization/workflows.py
+    53  ERROR   T2M013  Validator `validate_add_item` of update `add_item` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+nexus_cancel/caller/workflows.py
+    23  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+nexus_messaging/callerpattern/caller/workflows.py
+    26  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+nexus_messaging/callerpattern/handler/workflows.py
+    65  ERROR   T2M013  Validator `validate_set_language` of update `set_language` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+nexus_messaging/ondemandpattern/caller/workflows.py
+    28  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+nexus_messaging/ondemandpattern/handler/workflows.py
+    66  ERROR   T2M013  Validator `validate_set_language` of update `set_language` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+nexus_messaging_temporal_operation/callerpattern/caller/workflows.py
+    26  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+nexus_messaging_temporal_operation/callerpattern/handler/workflows.py
+    67  ERROR   T2M013  Validator `validate_set_language` of update `set_language` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+nexus_messaging_temporal_operation/ondemandpattern/caller/workflows.py
+    29  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+nexus_messaging_temporal_operation/ondemandpattern/handler/workflows.py
+    88  ERROR   T2M013  Validator `validate_set_language` of update `set_language` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+nexus_multiple_args/caller/workflows.py
+    15  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
+
+nexus_standalone_activity/activity.py
+     9  ERROR   T2M006  `GreetingInput` (parameter `input` of `create_greeting`) is a plain class: Mistral cannot build a JSON schema for it
+               -> Make it a dataclass or a pydantic model (Temporal accepted it through a custom payload converter).
+     9  ERROR   T2M006  `GreetingOutput` (return type of `create_greeting`) is a plain class: Mistral cannot build a JSON schema for it
+               -> Make it a dataclass or a pydantic model (Temporal accepted it through a custom payload converter).
+
+openai_agents/customer_service/workflows/customer_service_workflow.py
+    35  ERROR   T2M012  `@workflow.init` on `CustomerServiceWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+   126  ERROR   T2M013  Validator `validate_process_user_message` of update `process_user_message` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+
+openai_agents/streaming/workflows/stream_items_workflow.py
+    46  ERROR   T2M012  `@workflow.init` on `StreamItemsWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+openai_agents/streaming/workflows/stream_text_workflow.py
+    47  ERROR   T2M012  `@workflow.init` on `StreamTextWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+openrouter/activities.py
+   160  ERROR   T2M030  Activity method `call_openrouter` is defined on a class
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+
+openrouter/budget_gate/workflow.py
+    42  ERROR   T2M012  `@workflow.init` on `BudgetGateWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+   126  ERROR   T2M013  Validator `validate_raise_budget` of update `raise_budget` is not supported by Mistral
+               -> Validate inside the update handler and raise to reject the update.
+   163  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+openrouter/prompt_batch/workflow.py
+    63  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
+               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+
+resource_pool/pool_client/resource_pool_workflow.py
+    25  ERROR   T2M012  `@workflow.init` on `ResourcePoolWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+updatable_timer/workflow.py
+    11  ERROR   T2M012  `@workflow.init` on `Workflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+workflow_streams/workflows/hub_workflow.py
+    23  ERROR   T2M012  `@workflow.init` on `HubWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+workflow_streams/workflows/llm_workflow.py
+    32  ERROR   T2M012  `@workflow.init` on `LLMWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+workflow_streams/workflows/order_workflow.py
+    30  ERROR   T2M012  `@workflow.init` on `OrderWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+workflow_streams/workflows/pipeline_workflow.py
+    25  ERROR   T2M012  `@workflow.init` on `PipelineWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+workflow_streams/workflows/ticker_workflow.py
+    38  ERROR   T2M012  `@workflow.init` on `TickerWorkflow.__init__` is not supported
+               -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
+
+236 file(s) converted out of 537 using temporalio (734 scanned): 63 error(s), 713 warning(s), 312 info(s).

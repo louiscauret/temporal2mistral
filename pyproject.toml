@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "temporal2mistral"
+dynamic = ["version"]
+description = "Migrate Temporal Python workflows to Mistral Workflows (codemod + migration report)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Louis", email = "louiscauret@gmail.com" }]
+keywords = ["temporal", "mistral", "workflows", "codemod", "migration", "libcst"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = ["libcst>=1.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23"]
+# Needed only to validate converted code against the real Mistral SDK (tests/test_sdk_validation.py)
+mistral = ["mistralai-workflows>=3.15"]
+
+[project.scripts]
+temporal2mistral = "temporal2mistral.cli:main"
+
+[tool.hatch.version]
+path = "src/temporal2mistral/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/temporal2mistral"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "sdk: needs mistralai-workflows installed",
+    "e2e: needs the Temporal test server (downloaded from temporal.download)",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B"]
+ignore = ["B905"]  # zip() without strict=
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]  # sample Temporal code inside strings

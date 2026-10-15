@@ -41,11 +41,11 @@ jobs:
         env:
           T2M_SAMPLES: /tmp/samples-python
       - name: Convert and validate the whole samples repository
-        run: python scripts/validate_corpus.py /tmp/samples-python --out /tmp/converted --json corpus.json
+        run: python scripts/validate_corpus.py /tmp/samples-python --out /tmp/converted
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: corpus-validation
           path: |
-            corpus.json
-            /tmp/converted/_t2m_report.json
+            /tmp/converted/temporal2mistral-report.json
+            /tmp/converted/temporal2mistral-apply.txt

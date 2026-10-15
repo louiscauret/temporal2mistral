@@ -73,6 +73,20 @@ def rewrite_temporal_attribute(ctx: FileContext, original: cst.Attribute, update
     return updated
 
 
+def rewrite_module_reference(ctx: FileContext, node: cst.Name) -> cst.Name:
+    """`api = workflow` -> `api = temporal_workflow`: the name `workflow` now refers to Mistral's module."""
+    ctx.changed = True
+    if ctx.full_name(node) == WORKFLOW_MODULE:
+        module, alias = "workflow", TEMPORAL_WORKFLOW_ALIAS
+    else:
+        module, alias = "activity", TEMPORAL_ACTIVITY_ALIAS
+    ctx.need("temporalio", module, alias)
+    ctx.report(
+        "T2M060", node, f"The Temporal `{module}` module is used as a value: kept as `{alias}`", once_per_file=True
+    )
+    return cst.Name(alias)
+
+
 def _workflow_member(ctx: FileContext, node: cst.Attribute, member: str) -> cst.BaseExpression:
     if member in SAME_NAME_ON_MISTRAL:
         ctx.need("mistralai.workflows", "workflow")

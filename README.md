@@ -169,8 +169,8 @@ The tool reports these and leaves the code alone:
   registered automatically. Starting, signalling and querying workflows goes through the Mistral API
   (`Mistral(api_key=...).workflows.execute_workflow(workflow_identifier=..., input={...})`). The report
   points at each place and gives you the `run_worker` call.
-- Class-based activities (`execute_activity_method`). Mistral activities are module-level functions.
-  Use `Depends(...)` to share clients.
+- Class-based activities (`execute_activity_method`) and activities defined inside a function.
+  Mistral activities are module-level functions. Use `Depends(...)` to share clients.
 - `@workflow.init`, update validators, dynamic workflows and handlers, Nexus, asynchronous activity
   completion, and query or update handlers that return nothing.
 - Types with no JSON schema, such as plain classes that relied on a custom Temporal payload converter.
@@ -245,6 +245,7 @@ differently. Infos record what was changed.
 | T2M033 | warning | `start_activity` converted to `asyncio.create_task` |
 | T2M034 | info | Local activity converted to a regular activity |
 | T2M035 | warning | Activity chosen at runtime: call converted, options not moved |
+| T2M036 | error | Activities defined inside a function are not supported by Mistral |
 | T2M040 | info | Child workflow call converted to `workflow.execute_workflow` |
 | T2M041 | error | Child workflow target could not be resolved |
 | T2M042 | warning | Child workflow option has no Mistral equivalent and was dropped |

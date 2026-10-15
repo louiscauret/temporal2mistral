@@ -13,6 +13,7 @@ from pathlib import Path
 import libcst as cst
 from libcst.metadata import MetadataWrapper, PositionProvider
 
+from .calls import read_temporal_call
 from .syntax import (
     code_of,
     dotted_name,
@@ -51,9 +52,17 @@ class Activity:
     name: str  # Temporal activity name (`@activity.defn(name=...)`, defaults to the function name)
     path: str
     module: str  # dotted module name relative to the project root
-    is_async: bool
     is_method: bool
+    is_nested: bool  # defined inside a function
     calls: list[ActivityCall] = field(default_factory=list)
+
+
+@dataclass
+class ClassDefinition:
+    name: str
+    path: str
+    module: str
+    is_plain: bool  # no decorator and no base class: Mistral cannot build a JSON schema for it
 
 
 @dataclass
@@ -73,20 +82,12 @@ class Workflow:
 
 
 @dataclass
-class _UnresolvedCall:
-    call: ActivityCall
-    target: str  # full name of the called function, or the activity name for a string target
-    by_activity_name: bool
-
-
-@dataclass
 class Project:
     root: Path
     activities: list[Activity] = field(default_factory=list)
     workflows: list[Workflow] = field(default_factory=list)
     pydantic_models: set[str] = field(default_factory=set)  # class names deriving from BaseModel
-    plain_classes: set[str] = field(default_factory=set)  # classes without decorator nor base class
-    _unresolved_calls: list[_UnresolvedCall] = field(default_factory=list)
+    classes: list[ClassDefinition] = field(default_factory=list)
 
     def activity_defined_at(self, path: str, function: str) -> Activity | None:
         for activity in self.activities:
@@ -127,25 +128,42 @@ class Project:
             # A plain name that is not imported: the activity is defined in the caller's file.
             return [a for a in candidates if a.path == caller_path]
 
-        module = module.lstrip(".")
-        matching = [
-            a
-            for a in candidates
-            if a.module == module or a.module.endswith("." + module) or module.endswith("." + a.module)
-        ]
+        matching = [a for a in candidates if _same_module(a.module, module)]
         if matching:
             return matching
         # e.g. `import activities` from a sub-directory: accept the name if it is unique
         return candidates if len(candidates) == 1 else []
 
-    def link_activity_calls(self) -> None:
-        """Attach every recorded call to the activities it refers to. Run after scanning all files."""
-        for unresolved in self._unresolved_calls:
-            for activity in self.find_called_activities(
-                unresolved.target, unresolved.call.path, unresolved.by_activity_name
-            ):
-                activity.calls.append(unresolved.call)
-        self._unresolved_calls = []
+    def is_plain_class(self, name: str, used_in: str, imported_from: str | None) -> bool:
+        """Is the class ``name``, used in the file ``used_in``, a plain class?
+
+        ``imported_from`` is what that file imports the name from (``models.Input``), or None.
+        Projects often define classes with the same name in several places, so the definition
+        is looked up where the file imports it from, or in the file itself.
+        """
+        candidates = [c for c in self.classes if c.name == name]
+        if imported_from is not None:
+            module = imported_from.rpartition(".")[0]
+            found = [c for c in candidates if _same_module(c.module, module)]
+        else:
+            found = [c for c in candidates if c.path == used_in]
+        if found:
+            candidates = found
+        # Without a definition to look at, only flag a name when all its definitions are plain.
+        return bool(candidates) and all(c.is_plain for c in candidates)
+
+
+def _same_module(defined_in: str, imported_from: str) -> bool:
+    """Can ``imported_from`` (``app.models``, ``.models``, ``models``) be the module ``defined_in``?
+
+    Module names are relative to the project root, which is not always what the code imports from.
+    """
+    imported_from = imported_from.lstrip(".")
+    return (
+        defined_in == imported_from
+        or defined_in.endswith("." + imported_from)
+        or imported_from.endswith("." + defined_in)
+    )
 
 
 def module_name(root: Path, path: Path) -> str:
@@ -178,17 +196,22 @@ def workflow_parameters(run_method: cst.FunctionDef) -> list[Parameter]:
 
 
 class _Scanner(cst.CSTVisitor):
+    """Visits every file of the project in turn (call `start_file` before each one)."""
+
     METADATA_DEPENDENCIES = (PositionProvider,)
 
-    def __init__(
-        self, project: Project, path: Path, class_bases: dict[str, set[str]], class_is_plain: dict[str, list[bool]]
-    ) -> None:
+    def __init__(self, project: Project) -> None:
         super().__init__()
         self.project = project
+        # Collected across all files, used once every file has been scanned:
+        self.class_bases: dict[str, set[str]] = {}  # class name -> names of its base classes
+        # Activity calls with their target: the full name of the function, or the activity name
+        # for a string target (then True). Linked to activities once every activity is known.
+        self.calls: list[tuple[ActivityCall, str, bool]] = []
+
+    def start_file(self, path: Path) -> None:
         self.path = str(path)
-        self.module = module_name(project.root, path)
-        self.class_bases = class_bases
-        self.class_is_plain = class_is_plain
+        self.module = module_name(self.project.root, path)
         self.imports: dict[str, str] = {}
         self.constants: dict[str, cst.BaseExpression] = {}
         self.class_depth = 0
@@ -214,7 +237,7 @@ class _Scanner(cst.CSTVisitor):
                 bases.add(name.split(".")[-1])
         self.class_bases.setdefault(node.name.value, set()).update(bases)
         is_plain = not node.decorators and bases <= {"object"} and self.class_depth == 0 and self.function_depth == 0
-        self.class_is_plain.setdefault(node.name.value, []).append(is_plain)
+        self.project.classes.append(ClassDefinition(node.name.value, self.path, self.module, is_plain))
 
         for decorator in node.decorators:
             target, call = split_decorator(decorator)
@@ -254,8 +277,8 @@ class _Scanner(cst.CSTVisitor):
                 name=name,
                 path=self.path,
                 module=self.module,
-                is_async=node.asynchronous is not None,
                 is_method=self.class_depth > 0 and self.function_depth == 0,
+                is_nested=self.function_depth > 0,
             )
             self.project.activities.append(activity)
         self.function_depth += 1
@@ -266,33 +289,28 @@ class _Scanner(cst.CSTVisitor):
     def visit_Call(self, node: cst.Call) -> None:
         if full_name(node.func, self.imports) not in ACTIVITY_CALL_APIS:
             return
-        positional = positional_args(node)
-        keywords = keyword_args(node)
-        if positional:
-            target = positional[0].value
-        elif "activity" in keywords:
-            target = keywords["activity"].value
-        else:
+        temporal_call = read_temporal_call(node, target_keyword="activity")
+        if temporal_call.target is None:
             return
 
         options = {}
-        for keyword, arg in keywords.items():
-            if keyword not in ("activity", "arg", "args", "retry_policy"):
+        for keyword, arg in temporal_call.options.items():
+            if keyword != "retry_policy":
                 options[keyword] = code_of(self._resolve_constant(arg.value))
         retry_policy, retry_policy_code = None, None
-        if "retry_policy" in keywords:
-            retry_policy, retry_policy_code = self._read_retry_policy(keywords["retry_policy"].value)
+        if "retry_policy" in temporal_call.options:
+            retry_policy, retry_policy_code = self._read_retry_policy(temporal_call.options["retry_policy"].value)
 
         line = self.get_metadata(PositionProvider, node).start.line
         call = ActivityCall(self.path, line, options, retry_policy, retry_policy_code)
 
-        activity_name = string_value(target)
+        activity_name = string_value(temporal_call.target)
         if activity_name is not None:
-            self.project._unresolved_calls.append(_UnresolvedCall(call, activity_name, by_activity_name=True))
+            self.calls.append((call, activity_name, True))
             return
-        target_name = full_name(target, self.imports)
+        target_name = full_name(temporal_call.target, self.imports)
         if target_name is not None:
-            self.project._unresolved_calls.append(_UnresolvedCall(call, target_name, by_activity_name=False))
+            self.calls.append((call, target_name, False))
 
     def _resolve_constant(self, value: cst.BaseExpression) -> cst.BaseExpression:
         if isinstance(value, cst.Name) and value.value in self.constants:
@@ -313,23 +331,24 @@ class _Scanner(cst.CSTVisitor):
 
 def scan_project(root: Path, modules: dict[Path, cst.Module]) -> Project:
     project = Project(root=root)
-    class_bases: dict[str, set[str]] = {}
-    class_is_plain: dict[str, list[bool]] = {}
+    scanner = _Scanner(project)
     for path, module in modules.items():
-        MetadataWrapper(module, unsafe_skip_copy=True).visit(_Scanner(project, path, class_bases, class_is_plain))
-    project.link_activity_calls()
+        scanner.start_file(path)
+        MetadataWrapper(module, unsafe_skip_copy=True).visit(scanner)
+
+    # Calls are linked only now: an activity may be defined in a file scanned after its callers.
+    for call, target, by_activity_name in scanner.calls:
+        for activity in project.find_called_activities(target, call.path, by_activity_name):
+            activity.calls.append(call)
 
     # A class is a pydantic model if it derives from BaseModel, directly or through other project classes.
     models = {"BaseModel"}
     found_new_model = True
     while found_new_model:
         found_new_model = False
-        for class_name, bases in class_bases.items():
+        for class_name, bases in scanner.class_bases.items():
             if class_name not in models and bases & models:
                 models.add(class_name)
                 found_new_model = True
     project.pydantic_models = models - {"BaseModel"}
-
-    # Plain classes have no JSON schema; only flag a name when all its definitions are plain.
-    project.plain_classes = {name for name, plain in class_is_plain.items() if all(plain)}
     return project

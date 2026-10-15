@@ -46,6 +46,7 @@ _ALL_RULES = [
     Rule("T2M033", Severity.WARNING, "`start_activity` converted to `asyncio.create_task`"),
     Rule("T2M034", Severity.INFO, "Local activity converted to a regular activity"),
     Rule("T2M035", Severity.WARNING, "Activity chosen at runtime: call converted, options not moved"),
+    Rule("T2M036", Severity.ERROR, "Activities defined inside a function are not supported by Mistral"),
     Rule("T2M040", Severity.INFO, "Child workflow call converted to `workflow.execute_workflow`"),
     Rule("T2M041", Severity.ERROR, "Child workflow target could not be resolved"),
     Rule("T2M042", Severity.WARNING, "Child workflow option has no Mistral equivalent and was dropped"),

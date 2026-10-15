@@ -152,7 +152,9 @@ def _check_schema_types(
 ) -> None:
     visitor = _TypeNames()
     annotation.visit(visitor)
-    for type_name in sorted(visitor.names & ctx.project.plain_classes):
+    for type_name in sorted(visitor.names):
+        if not ctx.project.is_plain_class(type_name, str(ctx.path), ctx.imports.get(type_name)):
+            continue
         ctx.report(
             "T2M006",
             function,

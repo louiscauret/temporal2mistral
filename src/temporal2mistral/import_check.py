@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .diagnostics import Diagnostics
 from .project import SKIPPED_DIRECTORIES, MigrationResult
+from .scan import module_name
 
 # Runs in the subprocess: import a module and print the error, if any, as JSON.
 IMPORT_SCRIPT = """
@@ -46,13 +47,6 @@ def mistral_sdk_installed() -> bool:
         return importlib.util.find_spec("mistralai.workflows") is not None
     except ModuleNotFoundError:
         return False
-
-
-def _module_name(root: Path, path: Path) -> str:
-    parts = list(path.relative_to(root).with_suffix("").parts)
-    if parts[-1] == "__init__":
-        parts.pop()
-    return ".".join(parts)
 
 
 def _import_error(root: Path, module: str, path: Path, timeout: int) -> dict | None:
@@ -83,7 +77,7 @@ def check_imports(result: MigrationResult, import_root: Path | None = None, time
     """Import every converted module; return T2M090 (rejected) and T2M091 (not checkable) diagnostics."""
     diagnostics = Diagnostics()
     root = (import_root or result.root).resolve()
-    converted = [f for f in result.files if f.uses_temporal and f.path.resolve().is_relative_to(root)]
+    converted = [f for f in result.changed_files if f.path.resolve().is_relative_to(root)]
     if not converted:
         return diagnostics
 
@@ -96,7 +90,7 @@ def check_imports(result: MigrationResult, import_root: Path | None = None, time
         for file in sorted(converted, key=lambda f: str(f.path)):
             original_path = file.path.resolve()
             copied_path = copy / original_path.relative_to(root)
-            module = _module_name(root, original_path)
+            module = module_name(root, original_path)
 
             error = _import_error(copy, module, copied_path, timeout)
             if error is None:

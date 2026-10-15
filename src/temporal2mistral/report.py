@@ -27,7 +27,7 @@ def summary(result: MigrationResult) -> dict[str, int]:
     return {
         "files_scanned": result.files_scanned,
         "files_using_temporalio": len(result.files),
-        "files_converted": len([f for f in result.files if f.uses_temporal and f.changed]),
+        "files_converted": len(result.changed_files),
         "errors": result.diagnostics.count(Severity.ERROR),
         "warnings": result.diagnostics.count(Severity.WARNING),
         "infos": result.diagnostics.count(Severity.INFO),
@@ -81,7 +81,7 @@ def json_report(result: MigrationResult, min_severity: Severity = Severity.INFO)
         )
     files = []
     for file in sorted(result.files, key=lambda f: str(f.path)):
-        files.append({"path": _relative(result, str(file.path)), "converted": file.uses_temporal and file.changed})
+        files.append({"path": _relative(result, str(file.path)), "converted": file.changed})
     report = {
         "tool": "temporal2mistral",
         "version": __version__,

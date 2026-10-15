@@ -37,7 +37,6 @@ class ConvertedFile:
     path: Path
     original: str
     converted: str
-    uses_temporal: bool  # True when the file defines or calls workflows/activities
 
     @property
     def changed(self) -> bool:
@@ -105,17 +104,21 @@ def migrate(paths: list[Path], options: Options | None = None, exclude: list[str
         except (OSError, UnicodeDecodeError) as error:
             result.diagnostics.add("T2M000", str(path), 0, f"Could not read file: {error}")
             continue
-        if "temporalio" not in source:
+        uses_temporal = "temporalio" in source
+        # Other files are only scanned for their classes: input types often live in a separate models.py.
+        if not uses_temporal and "class " not in source:
             continue
         try:
             modules[path] = cst.parse_module(source)
         except cst.ParserSyntaxError as error:
-            result.diagnostics.add("T2M000", str(path), error.raw_line, f"Syntax error: {error.message}")
+            if uses_temporal:
+                result.diagnostics.add("T2M000", str(path), error.raw_line, f"Syntax error: {error.message}")
             continue
-        sources[path] = source
+        if uses_temporal:
+            sources[path] = source
 
     project = scan_project(result.root, modules)
     for path, source in sources.items():
-        converted, uses_temporal = rewrite_file(source, path, project, options, result.diagnostics)
-        result.files.append(ConvertedFile(path, source, converted, uses_temporal))
+        converted = rewrite_file(source, path, project, options, result.diagnostics)
+        result.files.append(ConvertedFile(path, source, converted))
     return result

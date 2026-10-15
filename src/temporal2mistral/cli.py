@@ -47,6 +47,7 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("paths", nargs="+", type=Path, help="files or directories to migrate")
     parser.add_argument(
         "--execution-timeout",
+        type=_duration,
         metavar="DURATION",
         help="set execution_timeout on every workflow (e.g. 30d, 12h); Mistral defaults to 1h",
     )
@@ -79,6 +80,17 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--import-root", type=Path, metavar="DIR", help="directory put on sys.path for --import-check")
 
 
+def _duration(text: str) -> float:
+    """Seconds in a duration such as `30d` or `12h`; argparse reports the error otherwise."""
+    try:
+        seconds = parse_cli_duration(text)
+    except ValueError:
+        seconds = 0
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(f"invalid duration {text!r} (use e.g. 30d, 12h, 90m, 45s)")
+    return seconds
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     for path in args.paths:
@@ -87,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     options = Options(
-        execution_timeout=parse_cli_duration(args.execution_timeout) if args.execution_timeout else None,
+        execution_timeout=args.execution_timeout,
         sync_activities=args.sync_activities,
         keep_unlimited_retries=not args.mistral_retry_defaults,
     )

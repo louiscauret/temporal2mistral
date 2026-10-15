@@ -22,8 +22,8 @@ from .activities import rewrite_activity_call, rewrite_activity_definition
 from .context import TEMPORAL_ACTIVITY_ALIAS, TEMPORAL_WORKFLOW_ALIAS, FileContext, Options
 from .diagnostics import Diagnostics
 from .scan import ACTIVITY_CALL_APIS, Project, Workflow
-from .syntax import code_of, dotted_name, import_table, split_decorator
-from .temporal_api import rewrite_temporal_attribute
+from .syntax import code_of, dotted_name, full_name, import_table, split_decorator
+from .temporal_api import ACTIVITY_MODULE, WORKFLOW_MODULE, rewrite_module_reference, rewrite_temporal_attribute
 from .workflows import (
     params_model_code,
     rewrite_child_workflow_call,
@@ -47,19 +47,13 @@ TEMPORAL_MODULES_TO_CLEAN = {"temporalio.workflow", "temporalio.activity", "temp
 
 
 class FileRewriter(cst.CSTTransformer):
-    METADATA_DEPENDENCIES = (PositionProvider,)
-
-    def __init__(
-        self, path: Path, project: Project, options: Options, diagnostics: Diagnostics, imports: dict[str, str]
-    ) -> None:
+    def __init__(self, ctx: FileContext) -> None:
         super().__init__()
-        self.ctx = FileContext(path, project, options, diagnostics, imports, line_of=self.line_of)
+        self.ctx = ctx
         # Classes we are in, innermost last, with the workflow each one defines (or None)
         self.class_stack: list[tuple[cst.ClassDef, Workflow | None]] = []
-        self.reported_temporal_client = False
-
-    def line_of(self, node: cst.CSTNode) -> int:
-        return self.get_metadata(PositionProvider, node).start.line
+        self.function_depth = 0  # number of functions we are in
+        self.module_references: set[cst.Name] = set()  # see _ModuleReferences
 
     def _is_temporal(self, node: cst.BaseExpression, name: str) -> bool:
         return self.ctx.full_name(node) == name
@@ -107,10 +101,20 @@ class FileRewriter(cst.CSTTransformer):
         kept[-1] = kept[-1].with_changes(comma=cst.MaybeSentinel.DEFAULT)
         return updated_node.with_changes(names=kept)
 
-    # `workflow.X` and `activity.X`
+    # `workflow.X` and `activity.X`, or `workflow` and `activity` alone
+
+    def visit_Module(self, node: cst.Module) -> None:
+        references = _ModuleReferences(self.ctx.imports)
+        node.visit(references)
+        self.module_references = references.found
 
     def leave_Attribute(self, original_node: cst.Attribute, updated_node: cst.Attribute) -> cst.BaseExpression:
         return rewrite_temporal_attribute(self.ctx, original_node, updated_node)
+
+    def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
+        if original_node in self.module_references:
+            return rewrite_module_reference(self.ctx, original_node)
+        return updated_node
 
     # Classes
 
@@ -142,15 +146,20 @@ class FileRewriter(cst.CSTTransformer):
 
     # Functions and methods
 
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        self.function_depth += 1
+
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef | cst.FlattenSentinel:
+        self.function_depth -= 1
         is_method = self._is_method(original_node)
+        is_nested = self.function_depth > 0
 
         for index, decorator in enumerate(original_node.decorators):
             target, _ = split_decorator(decorator)
             if self._is_temporal(target, "temporalio.activity.defn"):
-                return rewrite_activity_definition(self.ctx, original_node, updated_node, index, is_method)
+                return rewrite_activity_definition(self.ctx, original_node, updated_node, index, is_method, is_nested)
 
         if not is_method:
             return updated_node
@@ -202,14 +211,14 @@ class FileRewriter(cst.CSTTransformer):
             return rewrite_continue_as_new(self.ctx, original_node, updated_node, self._current_workflow())
         if api == "temporalio.worker.Worker":
             self._report_worker(original_node)
-        elif api.startswith("temporalio.client.Client") and not self.reported_temporal_client:
-            self.reported_temporal_client = True
+        elif api.startswith("temporalio.client.Client"):
             self.ctx.report(
                 "T2M071",
                 original_node,
                 "Temporal client in use: starting, signalling and querying workflows goes through the Mistral API",
                 "Use `Mistral(api_key=...).workflows.execute_workflow(workflow_identifier=..., input={...})` "
                 "and `.workflows.executions.signal_workflow_execution(...)` / `.query_workflow_execution(...)`.",
+                once_per_file=True,
             )
         return updated_node
 
@@ -267,6 +276,44 @@ class _UsedNames(cst.CSTVisitor):
         self.names.add(node.value)
 
 
+class _ModuleReferences(cst.CSTVisitor):
+    """Uses of the `workflow` or `activity` module itself, such as `api = workflow`.
+
+    `workflow.X` is left to leave_Attribute, and keywords (`f(workflow=...)`) and parameters
+    named `workflow` are not the module.
+    """
+
+    def __init__(self, imports: dict[str, str]) -> None:
+        self.imports = imports
+        self.found: set[cst.Name] = set()
+
+    def visit_Import(self, node: cst.Import) -> bool:
+        return False
+
+    def visit_ImportFrom(self, node: cst.ImportFrom) -> bool:
+        return False
+
+    def visit_Attribute(self, node: cst.Attribute) -> bool:
+        if not isinstance(node.value, cst.Name):
+            node.value.visit(self)
+        return False
+
+    def visit_Arg(self, node: cst.Arg) -> bool:
+        node.value.visit(self)
+        return False
+
+    def visit_Param(self, node: cst.Param) -> bool:
+        if node.annotation is not None:
+            node.annotation.visit(self)
+        if node.default is not None:
+            node.default.visit(self)
+        return False
+
+    def visit_Name(self, node: cst.Name) -> None:
+        if full_name(node, self.imports) in (WORKFLOW_MODULE, ACTIVITY_MODULE):
+            self.found.add(node)
+
+
 def _fix_imports(module: cst.Module, ctx: FileContext) -> cst.Module:
     """Add the imports the rewritten code uses, and remove the Temporal imports it no longer uses."""
     used = _UsedNames()
@@ -279,13 +326,12 @@ def _fix_imports(module: cst.Module, ctx: FileContext) -> cst.Module:
     return AddImportsVisitor(ctx.codemod_context).transform_module(module)
 
 
-def rewrite_file(
-    source: str, path: Path, project: Project, options: Options, diagnostics: Diagnostics
-) -> tuple[str, bool]:
-    """Return the converted source of one file, and whether it uses Temporal workflow/activity APIs."""
+def rewrite_file(source: str, path: Path, project: Project, options: Options, diagnostics: Diagnostics) -> str:
+    """Return the converted source of one file (the source itself when it uses no workflow or activity API)."""
     wrapper = MetadataWrapper(cst.parse_module(source))
-    rewriter = FileRewriter(path, project, options, diagnostics, import_table(wrapper.module))
-    new_module = wrapper.visit(rewriter)
-    if not rewriter.ctx.changed:
-        return source, False
-    return _fix_imports(new_module, rewriter.ctx).code, True
+    positions = wrapper.resolve(PositionProvider)
+    ctx = FileContext(path, project, options, diagnostics, import_table(wrapper.module), positions)
+    new_module = wrapper.visit(FileRewriter(ctx))
+    if not ctx.changed:
+        return source
+    return _fix_imports(new_module, ctx).code

@@ -143,12 +143,6 @@ nexus_messaging_temporal_operation/ondemandpattern/handler/workflows.py
 nexus_multiple_args/caller/workflows.py
     15  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
 
-nexus_standalone_activity/activity.py
-     9  ERROR   T2M006  `GreetingInput` (parameter `input` of `create_greeting`) is a plain class: Mistral cannot build a JSON schema for it
-               -> Make it a dataclass or a pydantic model (Temporal accepted it through a custom payload converter).
-     9  ERROR   T2M006  `GreetingOutput` (return type of `create_greeting`) is a plain class: Mistral cannot build a JSON schema for it
-               -> Make it a dataclass or a pydantic model (Temporal accepted it through a custom payload converter).
-
 openai_agents/customer_service/workflows/customer_service_workflow.py
     35  ERROR   T2M012  `@workflow.init` on `CustomerServiceWorkflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
@@ -187,6 +181,10 @@ updatable_timer/workflow.py
     11  ERROR   T2M012  `@workflow.init` on `Workflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
 
+worker_specific_task_queues/worker.py
+    29  ERROR   T2M036  Activity `select_task_queue` is defined inside a function
+               -> Mistral activities are module-level `async def` functions: move it to the top level of the module and pass what it used from the enclosing function as parameters.
+
 workflow_streams/workflows/hub_workflow.py
     23  ERROR   T2M012  `@workflow.init` on `HubWorkflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
@@ -207,4 +205,4 @@ workflow_streams/workflows/ticker_workflow.py
     38  ERROR   T2M012  `@workflow.init` on `TickerWorkflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
 
-236 file(s) converted out of 537 using temporalio (734 scanned): 63 error(s), 713 warning(s), 312 info(s).
+236 file(s) converted out of 537 using temporalio (734 scanned): 62 error(s), 713 warning(s), 311 info(s).

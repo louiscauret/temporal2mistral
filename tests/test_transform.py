@@ -470,6 +470,106 @@ def test_worker_and_client_code_is_reported_not_rewritten(convert):
     assert "T2M071" in out.codes()
 
 
+def test_input_types_defined_in_files_without_temporal(convert):
+    out = convert(
+        {
+            "models.py": """
+                from pydantic import BaseModel
+
+                class ChildInput(BaseModel):
+                    name: str
+
+                class Opaque:
+                    def __init__(self, value):
+                        self.value = value
+            """,
+            "w.py": """
+                from temporalio import workflow
+                from models import ChildInput, Opaque
+
+                @workflow.defn
+                class Child:
+                    @workflow.run
+                    async def run(self, input: ChildInput) -> str:
+                        return input.name
+
+                @workflow.defn
+                class Parent:
+                    @workflow.run
+                    async def run(self, opaque: Opaque) -> str:
+                        return await workflow.execute_child_workflow(Child.run, ChildInput(name="x"))
+            """,
+        }
+    )
+    src = out.files["w.py"]
+    assert 'workflow.execute_workflow(Child, params=ChildInput(name="x"))' in src
+    assert "ChildParams" not in src
+    assert out.messages("T2M006") == [
+        "`Opaque` (parameter `opaque` of `run`) is a plain class: Mistral cannot build a JSON schema for it"
+    ]
+
+
+def test_module_used_as_a_value_is_kept_from_temporal(convert):
+    out = convert(
+        {
+            "w.py": """
+                from temporalio import workflow
+
+                @workflow.defn
+                class W:
+                    @workflow.run
+                    async def run(self, workflow_id: str) -> str:
+                        api = workflow
+                        return describe(api, workflow=workflow_id)
+            """
+        }
+    )
+    src = out.files["w.py"]
+    assert "api = temporal_workflow" in src
+    assert "describe(api, workflow=workflow_id)" in src  # a keyword named `workflow` is not the module
+    assert "from temporalio import workflow as temporal_workflow" in src
+    assert "T2M060" in out.codes()
+
+
+def test_activity_defined_inside_a_function_is_reported(convert):
+    out = convert(
+        {
+            "w.py": """
+                from datetime import timedelta
+                from temporalio import activity, workflow
+
+                def build(queue: str):
+                    @activity.defn
+                    async def select_queue() -> str:
+                        return queue
+
+                    return select_queue
+
+                @workflow.defn
+                class W:
+                    @workflow.run
+                    async def run(self) -> str:
+                        return await workflow.execute_activity(select_queue, start_to_close_timeout=timedelta(seconds=5))
+            """
+        }
+    )
+    src = out.files["w.py"]
+    assert "    @temporal_activity.defn\n    async def select_queue() -> str:" in src
+    assert "await temporal_workflow.execute_activity(select_queue" in src
+    assert out.codes().count("T2M036") == 2  # the definition and the call
+
+
+def test_invalid_duration_is_a_usage_error(tmp_path, capsys):
+    import pytest
+
+    from temporal2mistral.cli import main
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["check", str(tmp_path), "--execution-timeout", "soon"])
+    assert exit_info.value.code == 2
+    assert "invalid duration 'soon'" in capsys.readouterr().err
+
+
 def test_every_converted_file_parses(convert):
     out = convert({"hello.py": HELLO})
     for src in out.files.values():

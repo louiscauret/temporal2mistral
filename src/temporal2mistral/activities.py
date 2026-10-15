@@ -39,6 +39,7 @@ def rewrite_activity_definition(
     updated: cst.FunctionDef,
     decorator_index: int,
     is_method: bool,
+    is_nested: bool,
 ) -> cst.FunctionDef | cst.FlattenSentinel:
     ctx.changed = True
     name = original.name.value
@@ -51,6 +52,15 @@ def rewrite_activity_definition(
             f"Activity method `{name}` is defined on a class",
             "Mistral activities are module-level `async def` functions: move it out of the class and inject "
             "shared clients with `Depends(...)` (mistralai.workflows.Depends).",
+        )
+        return updated
+    if is_nested:
+        ctx.report(
+            "T2M036",
+            original_decorator,
+            f"Activity `{name}` is defined inside a function",
+            "Mistral activities are module-level `async def` functions: move it to the top level of the module "
+            "and pass what it used from the enclosing function as parameters.",
         )
         return updated
 
@@ -228,6 +238,14 @@ def _callee(
             call,
             f"`{target_code}` is a class-based activity",
             "Move it to a module-level `async def` decorated with `@activity(...)`.",
+        )
+        return None
+    if any(a.is_nested for a in found):
+        ctx.report(
+            "T2M036",
+            call,
+            f"`{target_code}` is an activity defined inside a function",
+            "Move it to the top level of the module.",
         )
         return None
     if found:

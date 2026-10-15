@@ -9,6 +9,7 @@ most retries) so that no call fails sooner than it did on Temporal.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,7 +88,12 @@ def _timeout_values(
 
 
 def _report_disagreement(
-    activity_function: str, option: str, values: dict[float, list[str]], kept: float, render, result: DecoratorOptions
+    activity_function: str,
+    option: str,
+    values: dict[float, list[str]],
+    kept: float,
+    render: Callable[[float], str],  # how to show a value in the message, e.g. timedelta_code
+    result: DecoratorOptions,
 ) -> None:
     if len(values) < 2:
         return

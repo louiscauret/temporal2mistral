@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Input types defined in files that do not import `temporalio` (a separate `models.py`, for example)
+  are now found: pydantic models are passed to child workflows as is, and plain classes get `T2M006`.
+- `T2M006` looks a type up where the file imports it from, instead of matching every class with the
+  same name in the project (this removed a false positive on temporalio/samples-python).
+- `workflow` or `activity` used as a value (`api = workflow`) is kept as `temporal_workflow` /
+  `temporal_activity` instead of silently pointing at Mistral's module.
+- New rule `T2M036`: activities defined inside a function are reported and left unconverted, along with
+  their calls.
+- An invalid `--execution-timeout` is a usage error instead of a traceback.
+
 ## 0.1.0 — 2026-10-15
 
 First release.

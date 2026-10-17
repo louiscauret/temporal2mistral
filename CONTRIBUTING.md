@@ -11,9 +11,9 @@ The migration runs in two passes over the project (`project.py`):
    `workflow.execute_activity(...)` call with its options. This has to happen first because an
    activity and its calls usually live in different files.
 2. **Rewrite** (`rewrite.py`) walks each file with a LibCST transformer and hands every node it
-   cares about to the module that knows how to rewrite it. Workers and clients need to look at a
-   whole function first: `workers.py` and `clients.py` decide when entering a function, and record
-   the new code in `ctx.replacements`, which the transformer applies on its way out.
+   cares about to the module that knows how to rewrite it. Worker scripts need a look at a whole
+   function first: `workers.py` decides when entering a function and records the new statements in
+   `ctx.replacements`, which the transformer applies on its way out.
 
 | Module | Job |
 |---|---|
@@ -27,7 +27,7 @@ The migration runs in two passes over the project (`project.py`):
 | `signatures.py` | Type annotations Mistral needs |
 | `temporal_api.py` | Every other `workflow.X` / `activity.X` |
 | `workers.py` | `Worker(...)` entry points → `run_worker([...])` |
-| `clients.py` | Temporal client calls → the Mistral API client |
+| `clients.py` | Temporal client calls, reported with the Mistral code to write instead |
 | `calls.py` | Read the arguments of Temporal calls |
 | `syntax.py` | Small LibCST helpers and the import table |
 | `durations.py` | `timedelta(...)` values |

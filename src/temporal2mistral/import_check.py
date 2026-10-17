@@ -25,8 +25,8 @@ from .diagnostics import Diagnostics
 from .project import SKIPPED_DIRECTORIES, MigrationResult
 from .scan import module_name
 
-# Runs in the subprocess: import a module and print the error, if any, as JSON, with the
-# project file where it happened (the last one in the traceback: often a module it imports).
+# Runs in the subprocess: import a module and print the error, if any, as JSON, with the frames
+# of the traceback that are in the project, as [relative path, line].
 IMPORT_SCRIPT = """
 import importlib, json, os, sys, traceback
 root, module = os.path.realpath(sys.argv[1]), sys.argv[2]
@@ -34,13 +34,13 @@ sys.path.insert(0, root)
 try:
     importlib.import_module(module)
 except BaseException as error:
-    file, line = None, 0
+    frames = []
     for frame in traceback.extract_tb(error.__traceback__):
         filename = os.path.realpath(frame.filename)
         if filename.startswith(root + os.sep):
-            file, line = os.path.relpath(filename, root), frame.lineno
+            frames.append([os.path.relpath(filename, root), frame.lineno])
     message = str(error).strip().splitlines()[0] if str(error).strip() else ""
-    print(json.dumps({"type": type(error).__name__, "message": message, "file": file, "line": line}))
+    print(json.dumps({"type": type(error).__name__, "message": message, "frames": frames}))
     sys.exit(1)
 """
 
@@ -67,7 +67,7 @@ def _import_error(root: Path, module: str, timeout: int) -> dict | None:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return {"type": "Timeout", "message": f"import took more than {timeout}s", "file": None, "line": 0}
+        return {"type": "Timeout", "message": f"import took more than {timeout}s", "frames": []}
     if process.returncode == 0:
         return None
     last_line = process.stdout.strip().splitlines()[-1] if process.stdout.strip() else ""
@@ -75,7 +75,7 @@ def _import_error(root: Path, module: str, timeout: int) -> dict | None:
         return json.loads(last_line)
     except ValueError:
         stderr = process.stderr.strip().splitlines()
-        return {"type": "Error", "message": stderr[-1] if stderr else "unknown error", "file": None, "line": 0}
+        return {"type": "Error", "message": stderr[-1] if stderr else "unknown error", "frames": []}
 
 
 def check_imports(result: MigrationResult, import_root: Path | None = None, timeout: int = 60) -> Diagnostics:
@@ -111,9 +111,12 @@ def check_imports(result: MigrationResult, import_root: Path | None = None, time
                     "Install the project's dependencies (and set --import-root) to check it.",
                 )
             else:
-                # Report it where it happened: in a converted module imported by this one, if so.
-                origin = by_relative_path.get(error["file"], file)
-                line = error["line"] if error["file"] is not None else 0
+                # Report it where it happened: the last converted module of the traceback, which is
+                # often a module imported by this one.
+                origin, line = file, 0
+                for frame_path, frame_line in error["frames"]:
+                    if frame_path in by_relative_path:
+                        origin, line = by_relative_path[frame_path], frame_line
                 diagnostics.add(
                     "T2M090",
                     str(origin.path),

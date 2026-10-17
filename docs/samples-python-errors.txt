@@ -171,4 +171,4 @@ workflow_streams/workflows/ticker_workflow.py
     38  ERROR   T2M012  `@workflow.init` on `TickerWorkflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
 
-288 file(s) converted out of 537 using temporalio (734 scanned): 50 error(s), 638 warning(s), 378 info(s).
+259 file(s) converted out of 537 using temporalio (734 scanned): 50 error(s), 667 warning(s), 349 info(s).

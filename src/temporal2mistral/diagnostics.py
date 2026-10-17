@@ -59,7 +59,6 @@ _ALL_RULES = [
     Rule("T2M070", Severity.WARNING, "Temporal `Worker` must be replaced by `run_worker`"),
     Rule("T2M071", Severity.WARNING, "Temporal client calls must be replaced by the Mistral API client"),
     Rule("T2M072", Severity.INFO, "Temporal `Worker` replaced by `run_worker`"),
-    Rule("T2M073", Severity.INFO, "Temporal client calls converted to the Mistral API client"),
     Rule("T2M090", Severity.ERROR, "The Mistral SDK rejects the converted module at import time"),
     Rule("T2M091", Severity.INFO, "Module not import-checked: the original does not import in this environment"),
 ]

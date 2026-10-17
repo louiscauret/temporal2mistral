@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -220,7 +221,7 @@ async def main() -> list:
     return [result, handle.id, status, count, final]
 """
 
-# Runs the converted starter against a fake Mistral API that records the requests it receives.
+# Runs a starter against a fake Mistral API that records the requests it receives.
 CLIENT_RUNNER = """
 import asyncio, json, sys
 import httpx
@@ -252,25 +253,44 @@ def fake_client(**kwargs):
     return real_client(**kwargs, async_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
 mistralai.client.Mistral = fake_client
 
-import client_starter
-returned = asyncio.run(client_starter.main())
+import mistral_starter
+returned = asyncio.run(mistral_starter.main())
 print("RESULT " + json.dumps({"returned": returned, "requests": requests}))
 """
 
 
-def test_converted_client_code_calls_the_mistral_api(tmp_path: Path) -> None:
+def test_client_translations_call_the_mistral_api(tmp_path: Path) -> None:
+    """The Mistral code given in the T2M071 hints, assembled into a starter, sends the right requests."""
     src = tmp_path / "src"
     src.mkdir()
     (src / "client_workflow.py").write_text(textwrap.dedent(CLIENT_WORKFLOW).lstrip())
     (src / "client_starter.py").write_text(textwrap.dedent(CLIENT_STARTER).lstrip())
     result = migrate([src], Options(execution_timeout=3600))
-    assert "T2M073" in [d.code for d in result.diagnostics.items]
     out = tmp_path / "out"
     out.mkdir()
     for file in result.files:
         (out / file.path.name).write_text(file.converted)
 
-    env = {**os.environ, "LOG_LEVEL": "ERROR", "OTEL_ENABLED": "false", "MISTRAL_API_KEY": "test-key"}
+    hints = []
+    for diagnostic in result.diagnostics.sorted():
+        if diagnostic.code == "T2M071" and diagnostic.message.startswith("`"):
+            hints.append(re.findall(r"`([^`]+)`", diagnostic.hint))
+    execute, start, signal, query, update = hints
+    (out / "mistral_starter.py").write_text(
+        "from mistralai.client import Mistral\n"
+        "from client_workflow import Greeting, Order\n\n\n"
+        "async def main() -> list:\n"
+        '    client = Mistral(api_key="test-key")\n'
+        f"    result = {execute[0]}\n"
+        f"    {start[0]}\n"
+        f"    {signal[0]}\n"
+        f"    status = {query[0]}\n"
+        f"    count = {update[0]}\n"
+        f"    final = {start[2]}\n"
+        "    return [result, handle.execution_id, status, count, final]\n"
+    )
+
+    env = {**os.environ, "LOG_LEVEL": "ERROR", "OTEL_ENABLED": "false"}
     proc = subprocess.run(
         [sys.executable, "-c", CLIENT_RUNNER, str(out)], capture_output=True, text=True, env=env, cwd=out, timeout=120
     )
@@ -278,7 +298,7 @@ def test_converted_client_code_calls_the_mistral_api(tmp_path: Path) -> None:
     assert proc.returncode == 0 and lines, proc.stdout[-2000:] + proc.stderr[-4000:]
     data = json.loads(lines[-1][len("RESULT ") :])
     assert data["returned"] == ["done", "run-2", "ok", 1, "done"]
-    # The client adds fields of its own (tracing...): compare the ones the conversion sets
+    # The client adds fields of its own (tracing...): compare the ones the hints set
     calls = []
     for request in data["requests"]:
         body = request["body"]

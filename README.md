@@ -135,7 +135,6 @@ The output is correct but the imports aren't sorted, so run ruff, black or isort
 | any other `workflow.X` / `activity.X` (`logger`, `info()`, `patched()`, `all_handlers_finished()`...) | `temporal_workflow.X` / `temporal_activity.X`, imported with `from temporalio import workflow as temporal_workflow`. This works because Mistral workers run on Temporal |
 | activity method of a class built without arguments, called with `execute_activity_method` | module-level activity that gets the instance through `Depends(MyActivities)`; the method stays in the class |
 | `worker = Worker(client, workflows=[...], ...)` + `await worker.run()`, or `async with Worker(...)` that waits until interrupted | `await run_worker([...])`, and the `Client.connect` that only served the worker is removed |
-| `client.execute_workflow(...)`, `client.start_workflow(...)` and the handle's `result()`, `signal()`, `query()`, `execute_update()`, `.id` | the Mistral API client: `client.workflows.execute_workflow_and_wait_async(...)`, `.executions.signal_workflow_execution_async(...)`... |
 
 ### Activity options
 
@@ -165,27 +164,22 @@ return await workflow.execute_workflow(
 
 The child still validates its input against its own annotations, so dataclasses keep working.
 
-### Workers and clients
+### Workers
 
-Worker and client code is converted when the tool can tell it keeps its behaviour:
-
-- A worker becomes `run_worker` when it only runs until it is stopped and has no option that matters on
-  Mistral (`interceptors`, `plugins`, tuning...). Activities register themselves, and `task_queue` is
-  dropped because Mistral routes executions to deployments.
-- A client is converted function by function, and only when every use of it in that function is one of
-  the calls in the table above. Inputs follow Mistral's rule (a single pydantic model parameter is the
-  input itself, otherwise a dict of the parameters), and results come back as JSON values.
-- When the Temporal client has a `data_converter`, `plugins`, `interceptors` or `runtime`, neither its
-  worker nor its calls are converted.
-
-Everything else is reported with `T2M070` (worker) or `T2M071` (client).
+A worker becomes `run_worker` when it only runs until it is stopped, has no option that matters on
+Mistral (`interceptors`, `plugins`, tuning...), and is the only user of a client created next to it by
+`Client.connect` (that line is removed too, unless the client has a `data_converter`, `plugins`,
+`interceptors` or `runtime`). Activities register themselves, and `task_queue` is dropped because
+Mistral routes executions to deployments. Other workers are reported with `T2M070`.
 
 ## What you still have to do
 
 The tool reports these and leaves the code alone:
 
-- Worker and client code the tool cannot convert safely (see above). The report points at each place
-  and gives you the `run_worker` call or the Mistral API call to use.
+- Workers the tool cannot convert safely (see above). The report points at each one and gives you the
+  `run_worker` call.
+- Client code, the code that starts workflows and talks to them: see
+  [Migrating client code](#migrating-client-code) below.
 - Class-based activities whose class needs arguments to be built, and activities defined inside a
   function. Mistral activities are module-level functions: use `Depends(...)` with a function that
   builds the shared client.
@@ -196,6 +190,94 @@ The tool reports these and leaves the code alone:
   `--execution-timeout 30d` to set it on all of them.
 - Workflows already running on your Temporal cluster. They can't be moved: let them finish there and
   start new executions on Mistral.
+
+## Migrating client code
+
+The code that starts workflows and sends them signals, queries and updates moves from the Temporal
+client to the Mistral API client. The tool does not rewrite it, because client code is usually spread
+across an application (created at startup, used in request handlers...), and Mistral returns results as
+JSON values instead of instances of the workflow's return type. Check what your code does with them.
+
+Instead, `check` reports every call with the exact Mistral code to write (`T2M071`). Take this
+Temporal starter, `starter.py`:
+
+```python
+from temporalio.client import Client
+
+from workflows import GreetingWorkflow
+
+
+async def main() -> None:
+    client = await Client.connect("localhost:7233")
+    handle = await client.start_workflow(GreetingWorkflow.run, "Louis", id="greet", task_queue="greetings")
+    await handle.signal(GreetingWorkflow.approve, "Ana")
+    status = await handle.query(GreetingWorkflow.status)
+    print(status, await handle.result())
+```
+
+`temporal2mistral check` prints:
+
+```text
+starter.py
+     7  WARNING T2M071  Temporal client in use: starting, signalling and querying workflows goes through the Mistral API
+               -> Create `client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])` (from mistralai.client import Mistral). Each call to change is reported with its translation; see https://github.com/louiscauret/temporal2mistral#migrating-client-code
+     8  WARNING T2M071  `client.start_workflow(...)` goes through the Mistral API client
+               -> `handle = await client.workflows.execute_workflow_async(workflow_identifier="GreetingWorkflow", input={"name": "Louis"}, execution_id="greet")`; then `await handle.result()` becomes `(await client.workflows.wait_for_workflow_completion_async(handle.execution_id)).result`
+     9  WARNING T2M071  `handle.signal(...)` goes through the Mistral API client
+               -> `await client.workflows.executions.signal_workflow_execution_async(execution_id=handle.execution_id, name="approve", input={"approver": "Ana"})`
+    10  WARNING T2M071  `handle.query(...)` goes through the Mistral API client
+               -> `(await client.workflows.executions.query_workflow_execution_async(execution_id=handle.execution_id, name="status")).result`
+```
+
+Mistral, written from those hints:
+
+```python
+import os
+
+from mistralai.client import Mistral
+
+
+async def main() -> None:
+    client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+    handle = await client.workflows.execute_workflow_async(
+        workflow_identifier="GreetingWorkflow", input={"name": "Louis"}, execution_id="greet"
+    )
+    await client.workflows.executions.signal_workflow_execution_async(
+        execution_id=handle.execution_id, name="approve", input={"approver": "Ana"}
+    )
+    status = (
+        await client.workflows.executions.query_workflow_execution_async(
+            execution_id=handle.execution_id, name="status"
+        )
+    ).result
+    final = await client.workflows.wait_for_workflow_completion_async(handle.execution_id)
+    print(status, final.result)
+```
+
+The correspondence:
+
+| Temporal | Mistral |
+|---|---|
+| `client = await Client.connect(...)` | `client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])` |
+| `await client.execute_workflow(W.run, x, id="i")` | `await client.workflows.execute_workflow_and_wait_async(workflow_identifier="W", input={"param": x}, execution_id="i")` (returns the result) |
+| `handle = await client.start_workflow(W.run, x, id="i")` | `handle = await client.workflows.execute_workflow_async(workflow_identifier="W", input={"param": x}, execution_id="i")` |
+| `handle.id` | `handle.execution_id` |
+| `await handle.result()` | `(await client.workflows.wait_for_workflow_completion_async(handle.execution_id)).result` |
+| `await handle.signal(W.approve, x)` | `await client.workflows.executions.signal_workflow_execution_async(execution_id=handle.execution_id, name="approve", input={"param": x})` |
+| `await handle.query(W.status)` | `(await client.workflows.executions.query_workflow_execution_async(execution_id=handle.execution_id, name="status")).result` |
+| `await handle.execute_update(W.add, x)` | `(await client.workflows.executions.update_workflow_execution_async(execution_id=handle.execution_id, name="add", input={"param": x})).result` |
+
+Three rules to get right:
+
+- **The workflow is named**, not passed as a class: `workflow_identifier` is the name given to
+  `@workflow.define(name=...)`, which the tool sets to the Temporal workflow name.
+- **`input` is a dict of the parameters** by name (`{"name": "Louis"}` for `run(self, name: str)`). When
+  the workflow, signal, query or update takes a single pydantic model, the input is that model:
+  `input=order.model_dump(mode="json")`.
+- **Handlers are named too**: `name="approve"` is the method name, or the `name=` given to
+  `@workflow.signal(...)`, `@workflow.query(...)` or `@workflow.update(...)`.
+
+`task_queue` has no equivalent: Mistral routes executions to deployments.
 
 ## Options
 
@@ -276,7 +358,6 @@ differently. Infos record what was changed.
 | T2M070 | warning | Temporal `Worker` must be replaced by `run_worker` |
 | T2M071 | warning | Temporal client calls must be replaced by the Mistral API client |
 | T2M072 | info | Temporal `Worker` replaced by `run_worker` |
-| T2M073 | info | Temporal client calls converted to the Mistral API client |
 | T2M090 | error | The Mistral SDK rejects the converted module at import time |
 | T2M091 | info | Module not import-checked: the original does not import in this environment |
 
@@ -287,14 +368,14 @@ I test against Temporal's official [Python samples](https://github.com/temporali
 
 | | |
 |---|---:|
-| Modules converted (workflows, activities, workers, starters) | 288 |
+| Modules converted (workflows, activities, workers) | 259 |
 | Converted modules that don't compile | 0 |
-| Modules importable here (dependencies installed) | 134 |
-| … accepted by `mistralai-workflows` 3.15 at import | 127 |
-| … with no error diagnostic, accepted by the SDK | 106 / 106 |
+| Modules importable here (dependencies installed) | 130 |
+| … accepted by `mistralai-workflows` 3.15 at import | 123 |
+| … with no error diagnostic, accepted by the SDK | 102 / 102 |
 | … rejected by the SDK with no error diagnostic | 0 |
 
-The other 154 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
+The other 129 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
 Strands, Google ADK, boto3...). They were converted but not import-checked. All 7 rejected modules
 already have error diagnostics: one uses a plain class as input (`T2M006`), one has an update handler
 that returns `None` (`T2M015`), and five have recursive or forward-referenced input types and were
@@ -306,8 +387,7 @@ The full list of errors on the samples is in [docs/samples-python-errors.txt](do
 
 More tests go beyond imports. `tests/test_sdk_validation.py` runs a converted workflow (child
 workflow, sync and async activities, retry policy, signal, query and update) in the Mistral SDK's local
-mode, and runs converted client code against a fake Mistral API to check every request it sends.
-`tests/test_e2e_temporal.py` runs a converted workflow, with a class-based activity, on Temporal's test
+mode. `tests/test_e2e_temporal.py` runs a converted workflow, with a class-based activity, on Temporal's test
 server through the Mistral SDK's test worker. That one downloads the test server, so it runs in CI.
 
 ## Development

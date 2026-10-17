@@ -16,10 +16,9 @@ First release. Needs Python 3.12 or later, like `mistralai-workflows`.
 - Activity methods of classes built without arguments become module-level activities that get the
   instance through `Depends`.
 - Worker entry points that just run until stopped become `await run_worker([...])`.
-- Client code (`execute_workflow`, `start_workflow`, and the handle's `result`, `signal`, `query`,
-  `execute_update`) becomes calls to the Mistral API client, function by function, when every use of
-  the client can be converted.
-- 42 diagnostic rules covering what cannot be converted automatically, as text or JSON.
+- Client calls (`execute_workflow`, `start_workflow`, and the handle's `signal`, `query`,
+  `execute_update`) are reported one by one with the Mistral API client code to write instead.
+- 41 diagnostic rules covering what cannot be converted automatically, as text or JSON.
 - `--import-check`: import every converted module with the real `mistralai-workflows` SDK, and report
   each rejection in the module where it happens.
 - Validated on temporalio/samples-python (see README).

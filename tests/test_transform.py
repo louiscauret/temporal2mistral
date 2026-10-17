@@ -656,27 +656,6 @@ def test_workers_that_need_a_decision_are_reported(convert):
     assert "T2M072" not in out.codes()
 
 
-def test_client_with_a_use_that_cannot_be_converted_is_left_as_is(convert):
-    out = convert(
-        {
-            "w.py": WORKFLOW_FILE,
-            "starter.py": """
-                from temporalio.client import Client
-                from w import W
-
-                async def main() -> None:
-                    client = await Client.connect("localhost:7233")
-                    handle = await client.start_workflow(W.run, "x", id="x", task_queue="q")
-                    await handle.signal(W.approve, "Louis")
-                    print(await handle.describe())
-            """,
-        }
-    )
-    assert "await Client.connect(" in out.files["starter.py"]
-    assert "await handle.signal(W.approve" in out.files["starter.py"]
-    assert "T2M071" in out.codes() and "T2M073" not in out.codes()
-
-
 def test_class_based_activity_built_without_arguments_becomes_a_function(convert):
     out = convert(
         {
@@ -718,6 +697,46 @@ def test_class_based_activity_built_without_arguments_becomes_a_function(convert
     assert "from .activities import prompt" in workflows
     assert "return await prompt(text)" in workflows
     assert "T2M037" in out.codes() and "T2M030" not in out.codes()
+
+
+def test_client_calls_are_reported_with_their_mistral_translation(convert):
+    out = convert(
+        {
+            "w.py": WORKFLOW_FILE,
+            "starter.py": """
+                from temporalio.client import Client
+                from w import W
+
+                async def main() -> None:
+                    client = await Client.connect("localhost:7233")
+                    handle = await client.start_workflow(W.run, "Louis", id="greet", task_queue="q")
+                    await handle.signal(W.approve, "Ana")
+                    print(await handle.query("status"))
+            """,
+            "other.py": """
+                from temporalio import workflow
+
+                async def unrelated(bus) -> None:
+                    await bus.signal("approve", "Ana")  # not a Temporal client: no import from temporalio.client
+            """,
+        }
+    )
+    assert "await client.start_workflow(" in out.files["starter.py"]  # reported, not rewritten
+    hints = {d.line: d.hint for d in out.diagnostics if d.code == "T2M071" and d.path.endswith("starter.py")}
+    assert "Mistral(api_key=" in hints[5]
+    assert hints[6].startswith(
+        '`handle = await client.workflows.execute_workflow_async(workflow_identifier="W", '
+        'input={"name": "Louis"}, execution_id="greet")`'
+    )
+    assert hints[7] == (
+        "`await client.workflows.executions.signal_workflow_execution_async("
+        'execution_id=handle.execution_id, name="approve", input={"approver": "Ana"})`'
+    )
+    assert hints[8] == (
+        "`(await client.workflows.executions.query_workflow_execution_async("
+        'execution_id=handle.execution_id, name="status")).result`'
+    )
+    assert not [d for d in out.diagnostics if d.path.endswith("other.py") and d.code == "T2M071"]
 
 
 def test_every_converted_file_parses(convert):

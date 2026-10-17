@@ -62,7 +62,7 @@ class Activity:
     is_method: bool
     is_nested: bool  # defined inside a function
     class_name: str | None = None  # for a method: its class
-    class_needs_no_arguments: bool = False  # for a method: `MyActivities()` builds the class
+    becomes_function: bool = False  # a method that activities.py turns into a module-level function
     calls: list[ActivityCall] = field(default_factory=list)
 
 
@@ -142,25 +142,14 @@ class Project:
 
         module, _, function = target.rpartition(".")
         candidates = [a for a in self.activities if a.function == function]
-        if not module:
-            # A plain name that is not imported: the activity is defined in the caller's file.
-            return [a for a in candidates if a.path == caller_path]
-
-        matching = [a for a in candidates if _same_module(a.module, module)]
-        if matching:
-            return matching
-        # e.g. `import activities` from a sub-directory: accept the name if it is unique
-        return candidates if len(candidates) == 1 else []
+        return _narrow(candidates, module, caller_path)
 
     def find_method_activities(self, target: str, caller_path: str) -> list[Activity]:
         """Activities a method call refers to; ``target`` is ``MyActivities.do`` or ``app.acts.MyActivities.do``."""
         class_target, _, method = target.rpartition(".")
         module, _, class_name = class_target.rpartition(".")
         candidates = [a for a in self.activities if a.class_name == class_name and a.function == method]
-        if not module:
-            return [a for a in candidates if a.path == caller_path]
-        matching = [a for a in candidates if _same_module(a.module, module)]
-        return matching or (candidates if len(candidates) == 1 else [])
+        return _narrow(candidates, module, caller_path)
 
     def is_plain_class(self, name: str, used_in: str, imported_from: str | None) -> bool:
         """Is the class ``name``, used in the file ``used_in``, a plain class?
@@ -179,6 +168,18 @@ class Project:
             candidates = found
         # Without a definition to look at, only flag a name when all its definitions are plain.
         return bool(candidates) and all(c.is_plain for c in candidates)
+
+
+def _narrow(candidates: list[Activity], module: str, caller_path: str) -> list[Activity]:
+    """The activities a call can refer to, knowing the module it imports them from ("" when not imported)."""
+    if not module:
+        # A plain name that is not imported: the activity is defined in the caller's file.
+        return [a for a in candidates if a.path == caller_path]
+    matching = [a for a in candidates if _same_module(a.module, module)]
+    if matching:
+        return matching
+    # e.g. `import activities` from a sub-directory: accept the name if it is unique
+    return candidates if len(candidates) == 1 else []
 
 
 def _same_module(defined_in: str, imported_from: str) -> bool:
@@ -318,8 +319,11 @@ class _Scanner(cst.CSTVisitor):
             if activity.is_method:
                 cls = self.class_stack[-1]
                 activity.class_name = cls.name.value
-                # Only for a top-level class: activities.py adds the function next to it
-                activity.class_needs_no_arguments = len(self.class_stack) == 1 and _needs_no_arguments(cls)
+                # `Depends(MyActivities)` builds the instance, the new function goes next to the (top-level)
+                # class, and its instance parameter cannot come after `**kwargs`.
+                activity.becomes_function = (
+                    len(self.class_stack) == 1 and _needs_no_arguments(cls) and node.params.star_kwarg is None
+                )
             self.project.activities.append(activity)
         self.function_depth += 1
 
@@ -387,10 +391,7 @@ def _needs_no_arguments(cls: cst.ClassDef) -> bool:
         return False
     for statement in cls.body.body:
         if isinstance(statement, cst.FunctionDef) and statement.name.value == "__init__":
-            params = statement.params
-            others = list(params.posonly_params) + list(params.params)
-            others = others[1:] + list(params.kwonly_params)  # drop `self`
-            return all(param.default is not None for param in others)
+            return all(parameter.default is not None for parameter in method_parameters(statement))
     return True
 
 
@@ -409,6 +410,12 @@ def scan_project(root: Path, modules: dict[Path, cst.Module]) -> Project:
             found = project.find_called_activities(target, call.path, by_activity_name=lookup == "name")
         for activity in found:
             activity.calls.append(call)
+
+    # Two activities of a file with the same function name would give two functions with that name.
+    for activity in project.activities:
+        if activity.becomes_function:
+            same_name = [a for a in project.activities if a.path == activity.path and a.function == activity.function]
+            activity.becomes_function = len(same_name) == 1
 
     # A class is a pydantic model if it derives from BaseModel, directly or through other project classes.
     models = {"BaseModel"}

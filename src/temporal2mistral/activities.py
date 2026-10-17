@@ -23,7 +23,7 @@ import libcst as cst
 from .activity_options import decorator_options
 from .calls import read_temporal_call
 from .context import FileContext
-from .scan import Activity, Project
+from .scan import Activity
 from .signatures import check_signature
 from .syntax import code_of, dotted_name, keyword_args, positional_args, split_decorator, string_value
 
@@ -50,7 +50,7 @@ def rewrite_activity_definition(
     original_decorator = original.decorators[decorator_index]
     activity = ctx.project.activity_defined_at(str(ctx.path), name)
 
-    if is_method and (activity is None or not can_become_function(ctx.project, activity, original)):
+    if is_method and (activity is None or not activity.becomes_function):
         ctx.report(
             "T2M030",
             original_decorator,
@@ -129,17 +129,6 @@ def _decorator_arguments(
     if options.uses_timedelta:
         ctx.need("datetime", "timedelta")
     return arguments + options.arguments
-
-
-def can_become_function(project: Project, activity: Activity, method: cst.FunctionDef | None = None) -> bool:
-    """Can this activity method become a module-level function? Its class must be built without
-    arguments (`Depends` calls it), and no other activity of the file may have the same name."""
-    if not activity.is_method or not activity.class_needs_no_arguments:
-        return False
-    if method is not None and method.params.star_kwarg is not None:
-        return False  # the instance parameter cannot come after `**kwargs`
-    same_name = [a for a in project.activities if a.path == activity.path and a.function == activity.function]
-    return len(same_name) == 1
 
 
 def _method_to_function(
@@ -264,7 +253,10 @@ def rewrite_activity_call(ctx: FileContext, original: cst.Call, updated: cst.Cal
         ctx.report("T2M032", original, f"`workflow.{api}` without an activity argument")
         return updated
 
-    callee = _callee(ctx, original, original_target, temporal_call.target, api)
+    if api.endswith("_method"):  # `execute_activity_method(MyActivities.do, ...)`
+        callee = _method_callee(ctx, original, original_target)
+    else:
+        callee = _callee(ctx, original, original_target, temporal_call.target)
     if callee is None:
         return updated
 
@@ -300,17 +292,11 @@ def rewrite_activity_call(ctx: FileContext, original: cst.Call, updated: cst.Cal
 
 
 def _callee(
-    ctx: FileContext,
-    call: cst.Call,
-    original_target: cst.BaseExpression,
-    updated_target: cst.BaseExpression,
-    api: str,
+    ctx: FileContext, call: cst.Call, original_target: cst.BaseExpression, updated_target: cst.BaseExpression
 ) -> str | None:
     """The code to call the activity with, or None (and a diagnostic) when the call must stay as is."""
     path = str(ctx.path)
     target_code = code_of(original_target)
-    if api.endswith("_method"):
-        return _method_callee(ctx, call, original_target)
 
     activity_name = string_value(original_target)
     if activity_name is not None:
@@ -378,7 +364,7 @@ def _method_callee(ctx: FileContext, call: cst.Call, target: cst.BaseExpression)
     target_name = ctx.full_name(target)
     written = (dotted_name(target) or "").split(".")
     found = ctx.project.find_method_activities(target_name, str(ctx.path)) if target_name else []
-    if len(found) != 1 or not can_become_function(ctx.project, found[0]) or len(written) < 2:
+    if len(found) != 1 or not found[0].becomes_function or len(written) < 2:
         ctx.report(
             "T2M030",
             call,

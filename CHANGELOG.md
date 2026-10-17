@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — 2026-10-17
+## 0.1.0 — 2026-10-18
 
 First release. Needs Python 3.12 or later, like `mistralai-workflows`.
 

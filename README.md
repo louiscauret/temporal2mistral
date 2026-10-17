@@ -1,7 +1,8 @@
 # temporal2mistral
 
 [![CI](https://github.com/louiscauret/temporal2mistral/actions/workflows/ci.yml/badge.svg)](https://github.com/louiscauret/temporal2mistral/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12%20|%203.13-3776AB?logo=python&logoColor=white)
+[![PyPI](https://img.shields.io/pypi/v/temporal2mistral?color=3776AB)](https://pypi.org/project/temporal2mistral/)
+![Python](https://img.shields.io/badge/python-3.12%20|%203.13%20|%203.14-3776AB?logo=python&logoColor=white)
 ![Temporal](https://img.shields.io/badge/temporalio-1.29-141414?logo=temporal&logoColor=white)
 ![Mistral Workflows](https://img.shields.io/badge/mistralai--workflows-3.15-FA520F?logo=mistralai&logoColor=white)
 ![LibCST](https://img.shields.io/badge/built%20with-LibCST-4B8BBE)
@@ -41,11 +42,11 @@ Mistral Workflows runs on Temporal, so most of the API maps one to one. A few th
 ## Install
 
 ```console
-pip install temporal2mistral                 # not on PyPI yet
+pip install temporal2mistral
 pip install "temporal2mistral[mistral]"      # with the Mistral SDK, for --import-check
 ```
 
-From a clone: `pip install -e ".[test,mistral]"`. Needs Python 3.10+. The Mistral SDK itself needs 3.12+.
+Needs Python 3.12 or later, like the Mistral SDK. From a clone: `pip install -e ".[test,mistral]"`.
 
 ## Example
 

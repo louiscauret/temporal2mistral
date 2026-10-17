@@ -7,7 +7,7 @@ name = "temporal2mistral"
 dynamic = ["version"]
 description = "Migrate Temporal Python workflows to Mistral Workflows (codemod + migration report)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"  # like mistralai-workflows
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Louis Cauret", email = "louiscauret@gmail.com" }]
@@ -18,14 +18,22 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Code Generators",
 ]
-dependencies = ["libcst>=1.1"]
+dependencies = ["libcst>=1.8.5"]  # first release with Python 3.14 wheels
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.23"]
 # Needed only to validate converted code against the real Mistral SDK (tests/test_sdk_validation.py)
 mistral = ["mistralai-workflows>=3.15"]
+
+[project.urls]
+Homepage = "https://github.com/louiscauret/temporal2mistral"
+Issues = "https://github.com/louiscauret/temporal2mistral/issues"
+Changelog = "https://github.com/louiscauret/temporal2mistral/blob/main/CHANGELOG.md"
 
 [project.scripts]
 temporal2mistral = "temporal2mistral.cli:main"
@@ -46,7 +54,7 @@ markers = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "B"]

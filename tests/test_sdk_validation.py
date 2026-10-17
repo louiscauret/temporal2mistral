@@ -166,3 +166,135 @@ def test_samples_hello_import_with_the_sdk(tmp_path: Path) -> None:
     flagged = {d.path for d in result.diagnostics.items if d.severity.value == "error"}
     unexplained = [d for d in rejected if d.path not in flagged]
     assert not unexplained, [(d.path, d.message) for d in unexplained]
+
+
+CLIENT_WORKFLOW = """
+from dataclasses import dataclass
+
+from pydantic import BaseModel
+from temporalio import workflow
+
+
+@dataclass
+class Greeting:
+    text: str
+
+
+class Order(BaseModel):
+    item: str
+
+
+@workflow.defn(name="greeting")
+class GreetingWorkflow:
+    @workflow.run
+    async def run(self, greeting: Greeting, count: int = 1) -> str:
+        return greeting.text * count
+
+    @workflow.signal
+    async def approve(self, approver: str) -> None:
+        self.approver = approver
+
+    @workflow.query
+    def status(self) -> str:
+        return "ok"
+
+    @workflow.update(name="add-order")
+    async def add(self, order: Order) -> int:
+        return 1
+"""
+
+CLIENT_STARTER = """
+from temporalio.client import Client
+
+from client_workflow import Greeting, GreetingWorkflow, Order
+
+
+async def main() -> list:
+    client = await Client.connect("localhost:7233")
+    result = await client.execute_workflow(GreetingWorkflow.run, Greeting("Hi"), id="run-1", task_queue="q")
+    handle = await client.start_workflow(GreetingWorkflow.run, args=[Greeting("Yo"), 2], id="run-2", task_queue="q")
+    await handle.signal(GreetingWorkflow.approve, "Louis")
+    status = await handle.query(GreetingWorkflow.status)
+    count = await handle.execute_update(GreetingWorkflow.add, Order(item="tea"))
+    final = await handle.result()
+    return [result, handle.id, status, count, final]
+"""
+
+# Runs the converted starter against a fake Mistral API that records the requests it receives.
+CLIENT_RUNNER = """
+import asyncio, json, sys
+import httpx
+import mistralai.client
+
+sys.path.insert(0, sys.argv[1])
+requests = []
+
+def respond(request):
+    body = json.loads(request.content) if request.content else None
+    requests.append({"method": request.method, "path": request.url.path, "body": body})
+    path = request.url.path
+    execution = {
+        "workflow_name": "greeting", "root_execution_id": "x", "start_time": "2026-01-01T00:00:00Z",
+        "end_time": None, "result": None, "status": "RUNNING",
+    }
+    if path.endswith("/execute"):
+        return httpx.Response(200, json={**execution, "execution_id": body.get("execution_id")})
+    if path.endswith("/signals"):
+        return httpx.Response(202, json={"message": "Signal accepted"})
+    if path.endswith("/queries"):
+        return httpx.Response(200, json={"query_name": body["name"], "result": "ok"})
+    if path.endswith("/updates"):
+        return httpx.Response(200, json={"update_name": body["name"], "result": 1})
+    return httpx.Response(200, json={**execution, "execution_id": path.split("/")[-1], "status": "COMPLETED", "result": "done"})
+
+real_client = mistralai.client.Mistral
+def fake_client(**kwargs):
+    return real_client(**kwargs, async_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+mistralai.client.Mistral = fake_client
+
+import client_starter
+returned = asyncio.run(client_starter.main())
+print("RESULT " + json.dumps({"returned": returned, "requests": requests}))
+"""
+
+
+def test_converted_client_code_calls_the_mistral_api(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "client_workflow.py").write_text(textwrap.dedent(CLIENT_WORKFLOW).lstrip())
+    (src / "client_starter.py").write_text(textwrap.dedent(CLIENT_STARTER).lstrip())
+    result = migrate([src], Options(execution_timeout=3600))
+    assert "T2M073" in [d.code for d in result.diagnostics.items]
+    out = tmp_path / "out"
+    out.mkdir()
+    for file in result.files:
+        (out / file.path.name).write_text(file.converted)
+
+    env = {**os.environ, "LOG_LEVEL": "ERROR", "OTEL_ENABLED": "false", "MISTRAL_API_KEY": "test-key"}
+    proc = subprocess.run(
+        [sys.executable, "-c", CLIENT_RUNNER, str(out)], capture_output=True, text=True, env=env, cwd=out, timeout=120
+    )
+    lines = [line for line in proc.stdout.splitlines() if line.startswith("RESULT ")]
+    assert proc.returncode == 0 and lines, proc.stdout[-2000:] + proc.stderr[-4000:]
+    data = json.loads(lines[-1][len("RESULT ") :])
+    assert data["returned"] == ["done", "run-2", "ok", 1, "done"]
+    # The client adds fields of its own (tracing...): compare the ones the conversion sets
+    calls = []
+    for request in data["requests"]:
+        body = request["body"]
+        if body is not None:
+            body = {key: value for key, value in body.items() if key in ("execution_id", "input", "name")}
+        calls.append((request["method"], request["path"], body))
+    assert calls == [
+        ("POST", "/v1/workflows/greeting/execute", {"execution_id": "run-1", "input": {"greeting": {"text": "Hi"}}}),
+        ("GET", "/v1/workflows/executions/run-1", None),
+        (
+            "POST",
+            "/v1/workflows/greeting/execute",
+            {"execution_id": "run-2", "input": {"greeting": {"text": "Yo"}, "count": 2}},
+        ),
+        ("POST", "/v1/workflows/executions/run-2/signals", {"name": "approve", "input": {"approver": "Louis"}}),
+        ("POST", "/v1/workflows/executions/run-2/queries", {"name": "status"}),
+        ("POST", "/v1/workflows/executions/run-2/updates", {"name": "add-order", "input": {"item": "tea"}}),
+        ("GET", "/v1/workflows/executions/run-2", None),
+    ]

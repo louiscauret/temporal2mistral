@@ -25,17 +25,22 @@ from .diagnostics import Diagnostics
 from .project import SKIPPED_DIRECTORIES, MigrationResult
 from .scan import module_name
 
-# Runs in the subprocess: import a module and print the error, if any, as JSON.
+# Runs in the subprocess: import a module and print the error, if any, as JSON, with the
+# project file where it happened (the last one in the traceback: often a module it imports).
 IMPORT_SCRIPT = """
-import importlib, json, sys, traceback
-root, module, path = sys.argv[1], sys.argv[2], sys.argv[3]
+import importlib, json, os, sys, traceback
+root, module = os.path.realpath(sys.argv[1]), sys.argv[2]
 sys.path.insert(0, root)
 try:
     importlib.import_module(module)
 except BaseException as error:
-    lines = [frame.lineno for frame in traceback.extract_tb(error.__traceback__) if frame.filename == path]
+    file, line = None, 0
+    for frame in traceback.extract_tb(error.__traceback__):
+        filename = os.path.realpath(frame.filename)
+        if filename.startswith(root + os.sep):
+            file, line = os.path.relpath(filename, root), frame.lineno
     message = str(error).strip().splitlines()[0] if str(error).strip() else ""
-    print(json.dumps({"type": type(error).__name__, "message": message, "line": lines[-1] if lines else 0}))
+    print(json.dumps({"type": type(error).__name__, "message": message, "file": file, "line": line}))
     sys.exit(1)
 """
 
@@ -49,11 +54,11 @@ def mistral_sdk_installed() -> bool:
         return False
 
 
-def _import_error(root: Path, module: str, path: Path, timeout: int) -> dict | None:
+def _import_error(root: Path, module: str, timeout: int) -> dict | None:
     """Import ``module`` with ``root`` on sys.path; return the error, or None if it imports."""
     try:
         process = subprocess.run(
-            [sys.executable, "-c", IMPORT_SCRIPT, str(root), module, str(path)],
+            [sys.executable, "-c", IMPORT_SCRIPT, str(root), module],
             cwd=root,
             env={**os.environ, **QUIET_SDK},
             capture_output=True,
@@ -62,7 +67,7 @@ def _import_error(root: Path, module: str, path: Path, timeout: int) -> dict | N
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return {"type": "Timeout", "message": f"import took more than {timeout}s", "line": 0}
+        return {"type": "Timeout", "message": f"import took more than {timeout}s", "file": None, "line": 0}
     if process.returncode == 0:
         return None
     last_line = process.stdout.strip().splitlines()[-1] if process.stdout.strip() else ""
@@ -70,7 +75,7 @@ def _import_error(root: Path, module: str, path: Path, timeout: int) -> dict | N
         return json.loads(last_line)
     except ValueError:
         stderr = process.stderr.strip().splitlines()
-        return {"type": "Error", "message": stderr[-1] if stderr else "unknown error", "line": 0}
+        return {"type": "Error", "message": stderr[-1] if stderr else "unknown error", "file": None, "line": 0}
 
 
 def check_imports(result: MigrationResult, import_root: Path | None = None, timeout: int = 60) -> Diagnostics:
@@ -87,15 +92,15 @@ def check_imports(result: MigrationResult, import_root: Path | None = None, time
         for file in converted:
             (copy / file.path.resolve().relative_to(root)).write_text(file.converted, encoding="utf-8")
 
+        by_relative_path = {str(f.path.resolve().relative_to(root)): f for f in converted}
         for file in sorted(converted, key=lambda f: str(f.path)):
             original_path = file.path.resolve()
-            copied_path = copy / original_path.relative_to(root)
             module = module_name(root, original_path)
 
-            error = _import_error(copy, module, copied_path, timeout)
+            error = _import_error(copy, module, timeout)
             if error is None:
                 continue
-            original_error = _import_error(root, module, original_path, timeout)
+            original_error = _import_error(root, module, timeout)
             if original_error is not None:
                 diagnostics.add(
                     "T2M091",
@@ -106,10 +111,13 @@ def check_imports(result: MigrationResult, import_root: Path | None = None, time
                     "Install the project's dependencies (and set --import-root) to check it.",
                 )
             else:
+                # Report it where it happened: in a converted module imported by this one, if so.
+                origin = by_relative_path.get(error["file"], file)
+                line = error["line"] if error["file"] is not None else 0
                 diagnostics.add(
                     "T2M090",
-                    str(file.path),
-                    error["line"],
+                    str(origin.path),
+                    line,
                     f"{error['type']}: {error['message']}",
                     "Line numbers refer to the converted file.",
                 )

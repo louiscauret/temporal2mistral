@@ -13,6 +13,13 @@ First release. Needs Python 3.12 or later, like `mistralai-workflows`.
 - Child workflows and `continue_as_new` mapped to Mistral's pydantic-model inputs, with generated
   params models when the target takes dataclasses or primitives. Input types are found in every file
   of the project, including the ones that do not import `temporalio`.
-- 39 diagnostic rules covering what cannot be converted automatically, as text or JSON.
-- `--import-check`: import every converted module with the real `mistralai-workflows` SDK.
+- Activity methods of classes built without arguments become module-level activities that get the
+  instance through `Depends`.
+- Worker entry points that just run until stopped become `await run_worker([...])`.
+- Client code (`execute_workflow`, `start_workflow`, and the handle's `result`, `signal`, `query`,
+  `execute_update`) becomes calls to the Mistral API client, function by function, when every use of
+  the client can be converted.
+- 42 diagnostic rules covering what cannot be converted automatically, as text or JSON.
+- `--import-check`: import every converted module with the real `mistralai-workflows` SDK, and report
+  each rejection in the module where it happens.
 - Validated on temporalio/samples-python (see README).

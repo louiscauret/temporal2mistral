@@ -1,38 +1,16 @@
 batch_sliding_window/batch_workflow.py
-    41  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+    41  ERROR   T2M030  `RecordLoader.get_record_count` is a class-based activity
+               -> Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.
 
 batch_sliding_window/record_loader_activity.py
     36  ERROR   T2M030  Activity method `get_record_count` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends). This is done automatically when the class can be built without arguments.
     45  ERROR   T2M030  Activity method `get_records` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends). This is done automatically when the class can be built without arguments.
 
 batch_sliding_window/sliding_window_workflow.py
-    92  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
-
-bedrock/basic/workflows.py
-    15  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
-
-bedrock/entity/workflows.py
-    60  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
-    80  ERROR   T2M030  `workflow.start_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
-   109  ERROR   T2M030  `workflow.start_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
-
-bedrock/shared/activities.py
-    14  ERROR   T2M030  Activity method `prompt_bedrock` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
-
-bedrock/signals_and_queries/workflows.py
-    50  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
-    62  ERROR   T2M030  `workflow.start_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+    92  ERROR   T2M030  `RecordLoader.get_records` is a class-based activity
+               -> Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.
 
 custom_converter/workflow.py
     10  ERROR   T2M006  `GreetingInput` (parameter `input` of `run`) is a plain class: Mistral cannot build a JSON schema for it
@@ -45,18 +23,6 @@ deepagents_plugin/human_in_the_loop/workflow.py
                -> Return something meaningful (e.g. the new state, or a bool) and annotate it.
     85  ERROR   T2M013  Validator `validate_resume` of update `resume` is not supported by Mistral
                -> Validate inside the update handler and raise to reject the update.
-
-dsl/activities.py
-     5  ERROR   T2M030  Activity method `activity1` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
-    10  ERROR   T2M030  Activity method `activity2` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
-    15  ERROR   T2M030  Activity method `activity3` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
-    20  ERROR   T2M030  Activity method `activity4` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
-    25  ERROR   T2M030  Activity method `activity5` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
 
 dsl/workflow.py
     67  ERROR   T2M032  `stmt.activity.name` is not an activity defined in the converted project
@@ -76,17 +42,17 @@ google_genai/streaming/workflow.py
 
 hello/hello_activity_method.py
     19  ERROR   T2M030  Activity method `do_database_thing` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
-    28  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends). This is done automatically when the class can be built without arguments.
+    28  ERROR   T2M030  `MyActivities.do_database_thing` is a class-based activity
+               -> Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.
 
 hello/hello_async_activity_completion.py
     21  ERROR   T2M030  Activity method `compose_greeting` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends). This is done automatically when the class can be built without arguments.
     37  ERROR   T2M062  `activity.raise_complete_async` (asynchronous activity completion) is not supported by Mistral
                -> Turn the activity into a workflow waiting for a signal or update instead.
-    62  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+    62  ERROR   T2M030  `GreetingComposer.compose_greeting` is a class-based activity
+               -> Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.
 
 hello_nexus/caller/workflows.py
     15  ERROR   T2M062  `workflow.create_nexus_client` (Temporal Nexus) has no Mistral equivalent
@@ -159,19 +125,19 @@ openai_agents/streaming/workflows/stream_text_workflow.py
 
 openrouter/activities.py
    160  ERROR   T2M030  Activity method `call_openrouter` is defined on a class
-               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends).
+               -> Mistral activities are module-level `async def` functions: move it out of the class and inject shared clients with `Depends(...)` (mistralai.workflows.Depends). This is done automatically when the class can be built without arguments.
 
 openrouter/budget_gate/workflow.py
     42  ERROR   T2M012  `@workflow.init` on `BudgetGateWorkflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
    126  ERROR   T2M013  Validator `validate_raise_budget` of update `raise_budget` is not supported by Mistral
                -> Validate inside the update handler and raise to reject the update.
-   163  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+   163  ERROR   T2M030  `OpenRouterActivities.call_openrouter` is a class-based activity
+               -> Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.
 
 openrouter/prompt_batch/workflow.py
-    63  ERROR   T2M030  `workflow.execute_activity_method` calls a class-based activity
-               -> Move the activity to a module-level `async def` decorated with `@activity(...)` and call it directly.
+    63  ERROR   T2M030  `OpenRouterActivities.call_openrouter` is a class-based activity
+               -> Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.
 
 resource_pool/pool_client/resource_pool_workflow.py
     25  ERROR   T2M012  `@workflow.init` on `ResourcePoolWorkflow.__init__` is not supported
@@ -205,4 +171,4 @@ workflow_streams/workflows/ticker_workflow.py
     38  ERROR   T2M012  `@workflow.init` on `TickerWorkflow.__init__` is not supported
                -> Mistral instantiates workflow classes without arguments: move the initialisation into the entrypoint.
 
-236 file(s) converted out of 537 using temporalio (734 scanned): 62 error(s), 713 warning(s), 311 info(s).
+288 file(s) converted out of 537 using temporalio (734 scanned): 50 error(s), 638 warning(s), 378 info(s).

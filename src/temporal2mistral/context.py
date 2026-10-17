@@ -34,12 +34,20 @@ class FileContext:
     diagnostics: Diagnostics
     imports: dict[str, str]  # import table of the file, see syntax.import_table
     positions: Mapping[cst.CSTNode, CodeRange]  # where each node of the original file is
+    parents: Mapping[cst.CSTNode, cst.CSTNode]  # the parent of each node of the original file
     # Imports the rewritten code may need, as (module, name, alias). They are only
     # added if the name is actually used in the final code (see rewrite.py).
     needed_imports: set[tuple[str, str | None, str | None]] = field(default_factory=set)
     # Workflows that need a generated pydantic "params" model in this file, by class name
     params_models: dict[str, Workflow] = field(default_factory=dict)
     changed: bool = False
+    # Replacements decided by looking at a whole function (workers.py, clients.py), keyed by
+    # nodes of the original file: new source for a statement ("" removes it) or an expression.
+    replacements: dict[cst.CSTNode, str] = field(default_factory=dict)
+    # Temporal Worker and Client calls converted that way: not reported as left to the user
+    converted_calls: set[cst.CSTNode] = field(default_factory=set)
+    # Module-level activities that replace activity methods, to add after their class (by class name)
+    functions_after_class: dict[str, list[cst.FunctionDef]] = field(default_factory=dict)
     # Used by LibCST's AddImportsVisitor / RemoveImportsVisitor to queue import changes
     codemod_context: CodemodContext = field(default_factory=CodemodContext)
 

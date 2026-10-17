@@ -6,6 +6,7 @@ module that knows how to rewrite it:
 - workflow classes and their methods, child workflows, continue-as-new: workflows.py
 - activity definitions and calls: activities.py
 - any other `workflow.X` / `activity.X`: temporal_api.py
+- worker entry points and client code: workers.py, clients.py
 
 Then `rewrite_file` fixes the imports of the result.
 """
@@ -16,14 +17,16 @@ from pathlib import Path
 
 import libcst as cst
 from libcst.codemod.visitors import AddImportsVisitor, RemoveImportsVisitor
-from libcst.metadata import MetadataWrapper, PositionProvider
+from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
 
 from .activities import rewrite_activity_call, rewrite_activity_definition
+from .clients import plan_client_conversion
 from .context import TEMPORAL_ACTIVITY_ALIAS, TEMPORAL_WORKFLOW_ALIAS, FileContext, Options
 from .diagnostics import Diagnostics
-from .scan import ACTIVITY_CALL_APIS, Project, Workflow
+from .scan import ACTIVITY_CALL_APIS, METHOD_ACTIVITY_CALL_APIS, Project, Workflow
 from .syntax import code_of, dotted_name, full_name, import_table, split_decorator
 from .temporal_api import ACTIVITY_MODULE, WORKFLOW_MODULE, rewrite_module_reference, rewrite_temporal_attribute
+from .workers import WORKER, plan_worker_conversions
 from .workflows import (
     params_model_code,
     rewrite_child_workflow_call,
@@ -32,18 +35,18 @@ from .workflows import (
     rewrite_workflow_method,
 )
 
-CLASS_BASED_ACTIVITY_APIS = {
-    "temporalio.workflow.execute_activity_method",
-    "temporalio.workflow.start_activity_method",
-    "temporalio.workflow.execute_local_activity_method",
-    "temporalio.workflow.start_local_activity_method",
-    "temporalio.workflow.execute_activity_class",
-    "temporalio.workflow.start_activity_class",
-}
+# Activities given as a callable class instance: not supported by Mistral
+CLASS_BASED_ACTIVITY_APIS = {"temporalio.workflow.execute_activity_class", "temporalio.workflow.start_activity_class"}
 CHILD_WORKFLOW_APIS = {"temporalio.workflow.execute_child_workflow", "temporalio.workflow.start_child_workflow"}
 
 # Imports of these modules are removed once the rewritten code no longer uses them.
-TEMPORAL_MODULES_TO_CLEAN = {"temporalio.workflow", "temporalio.activity", "temporalio.common"}
+TEMPORAL_MODULES_TO_CLEAN = {
+    "temporalio.workflow",
+    "temporalio.activity",
+    "temporalio.common",
+    "temporalio.client",
+    "temporalio.worker",
+}
 
 
 class FileRewriter(cst.CSTTransformer):
@@ -109,6 +112,8 @@ class FileRewriter(cst.CSTTransformer):
         self.module_references = references.found
 
     def leave_Attribute(self, original_node: cst.Attribute, updated_node: cst.Attribute) -> cst.BaseExpression:
+        if original_node in self.ctx.replacements:
+            return cst.parse_expression(self.ctx.replacements[original_node])
         return rewrite_temporal_attribute(self.ctx, original_node, updated_node)
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
@@ -126,17 +131,25 @@ class FileRewriter(cst.CSTTransformer):
                 workflow = self.ctx.project.workflow_defined_at(str(self.ctx.path), node.name.value)
         self.class_stack.append((node, workflow))
 
-    def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.ClassDef:
+    def leave_ClassDef(
+        self, original_node: cst.ClassDef, updated_node: cst.ClassDef
+    ) -> cst.ClassDef | cst.FlattenSentinel:
         _, workflow = self.class_stack.pop()
-        if workflow is None:
+        if workflow is not None:
+            decorators = []
+            for original_decorator, decorator in zip(original_node.decorators, updated_node.decorators):
+                target, _ = split_decorator(original_decorator)
+                if self._is_temporal(target, "temporalio.workflow.defn"):
+                    decorator = rewrite_workflow_decorator(self.ctx, original_node, original_decorator, decorator)
+                decorators.append(decorator)
+            updated_node = updated_node.with_changes(decorators=decorators)
+
+        # Module-level activities replacing the activity methods of this class (see activities.py)
+        functions = self.ctx.functions_after_class.pop(original_node.name.value, [])
+        if not functions or self.class_stack:
             return updated_node
-        decorators = []
-        for original_decorator, decorator in zip(original_node.decorators, updated_node.decorators):
-            target, _ = split_decorator(original_decorator)
-            if self._is_temporal(target, "temporalio.workflow.defn"):
-                decorator = rewrite_workflow_decorator(self.ctx, original_node, original_decorator, decorator)
-            decorators.append(decorator)
-        return updated_node.with_changes(decorators=decorators)
+        spaced = [function.with_changes(leading_lines=[cst.EmptyLine(), cst.EmptyLine()]) for function in functions]
+        return cst.FlattenSentinel([updated_node, *spaced])
 
     def _current_workflow(self) -> Workflow | None:
         for _, workflow in reversed(self.class_stack):
@@ -148,6 +161,9 @@ class FileRewriter(cst.CSTTransformer):
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
         self.function_depth += 1
+        if node.asynchronous is not None:
+            plan_worker_conversions(self.ctx, node)
+            plan_client_conversion(self.ctx, node)
 
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
@@ -187,6 +203,37 @@ class FileRewriter(cst.CSTTransformer):
                         names.add(statement.name.value)
         return names
 
+    # Statements and expressions replaced by workers.py and clients.py
+
+    def leave_SimpleStatementLine(
+        self, original_node: cst.SimpleStatementLine, updated_node: cst.SimpleStatementLine
+    ) -> cst.BaseStatement | cst.FlattenSentinel | cst.RemovalSentinel:
+        return self._replaced_statement(original_node, updated_node)
+
+    def leave_With(
+        self, original_node: cst.With, updated_node: cst.With
+    ) -> cst.BaseStatement | cst.FlattenSentinel | cst.RemovalSentinel:
+        return self._replaced_statement(original_node, updated_node)
+
+    def _replaced_statement(
+        self, original_node: cst.SimpleStatementLine | cst.With, updated_node: cst.BaseStatement
+    ) -> cst.BaseStatement | cst.FlattenSentinel | cst.RemovalSentinel:
+        if original_node not in self.ctx.replacements:
+            return updated_node
+        replacement = cst.parse_module(self.ctx.replacements[original_node])
+        statements = list(replacement.body)
+        if not statements:
+            return cst.RemoveFromParent()
+        # Comments before the first statement are parsed as the header of the replacement
+        leading_lines = [*original_node.leading_lines, *replacement.header, *statements[0].leading_lines]
+        statements[0] = statements[0].with_changes(leading_lines=leading_lines)
+        return cst.FlattenSentinel(statements)
+
+    def leave_Await(self, original_node: cst.Await, updated_node: cst.Await) -> cst.BaseExpression:
+        if original_node in self.ctx.replacements:
+            return cst.parse_expression(self.ctx.replacements[original_node])
+        return updated_node
+
     # Calls
 
     def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
@@ -196,6 +243,8 @@ class FileRewriter(cst.CSTTransformer):
         short_name = api.split(".")[-1]
 
         if api in ACTIVITY_CALL_APIS:
+            return rewrite_activity_call(self.ctx, original_node, updated_node, short_name)
+        if api in METHOD_ACTIVITY_CALL_APIS:
             return rewrite_activity_call(self.ctx, original_node, updated_node, short_name)
         if api in CLASS_BASED_ACTIVITY_APIS:
             self.ctx.report(
@@ -209,7 +258,9 @@ class FileRewriter(cst.CSTTransformer):
             return rewrite_child_workflow_call(self.ctx, original_node, updated_node, short_name)
         if api == "temporalio.workflow.continue_as_new":
             return rewrite_continue_as_new(self.ctx, original_node, updated_node, self._current_workflow())
-        if api == "temporalio.worker.Worker":
+        if original_node in self.ctx.converted_calls:
+            return updated_node
+        if api == WORKER:
             self._report_worker(original_node)
         elif api.startswith("temporalio.client.Client"):
             self.ctx.report(
@@ -321,7 +372,11 @@ def _fix_imports(module: cst.Module, ctx: FileContext) -> cst.Module:
     for import_module, name, alias in sorted(ctx.needed_imports, key=str):
         bound_name = alias or name or import_module.split(".")[0]
         if bound_name in used.names:
-            AddImportsVisitor.add_needed_import(ctx.codemod_context, import_module, name, alias)
+            # `.activities` is a relative import: AddImportsVisitor takes the dots apart
+            dots = len(import_module) - len(import_module.lstrip("."))
+            AddImportsVisitor.add_needed_import(
+                ctx.codemod_context, import_module.lstrip("."), name, alias, relative=dots
+            )
     module = RemoveImportsVisitor(ctx.codemod_context).transform_module(module)
     return AddImportsVisitor(ctx.codemod_context).transform_module(module)
 
@@ -330,7 +385,8 @@ def rewrite_file(source: str, path: Path, project: Project, options: Options, di
     """Return the converted source of one file (the source itself when it uses no workflow or activity API)."""
     wrapper = MetadataWrapper(cst.parse_module(source))
     positions = wrapper.resolve(PositionProvider)
-    ctx = FileContext(path, project, options, diagnostics, import_table(wrapper.module), positions)
+    parents = wrapper.resolve(ParentNodeProvider)
+    ctx = FileContext(path, project, options, diagnostics, import_table(wrapper.module), positions, parents)
     new_module = wrapper.visit(FileRewriter(ctx))
     if not ctx.changed:
         return source

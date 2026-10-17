@@ -133,6 +133,9 @@ The output is correct but the imports aren't sorted, so run ruff, black or isort
 | `-> NoReturn` / `-> Never` | `-> None` |
 | no return annotation on a handler or activity that returns nothing | `-> None` added |
 | any other `workflow.X` / `activity.X` (`logger`, `info()`, `patched()`, `all_handlers_finished()`...) | `temporal_workflow.X` / `temporal_activity.X`, imported with `from temporalio import workflow as temporal_workflow`. This works because Mistral workers run on Temporal |
+| activity method of a class built without arguments, called with `execute_activity_method` | module-level activity that gets the instance through `Depends(MyActivities)`; the method stays in the class |
+| `worker = Worker(client, workflows=[...], ...)` + `await worker.run()`, or `async with Worker(...)` that waits until interrupted | `await run_worker([...])`, and the `Client.connect` that only served the worker is removed |
+| `client.execute_workflow(...)`, `client.start_workflow(...)` and the handle's `result()`, `signal()`, `query()`, `execute_update()`, `.id` | the Mistral API client: `client.workflows.execute_workflow_and_wait_async(...)`, `.executions.signal_workflow_execution_async(...)`... |
 
 ### Activity options
 
@@ -162,16 +165,30 @@ return await workflow.execute_workflow(
 
 The child still validates its input against its own annotations, so dataclasses keep working.
 
+### Workers and clients
+
+Worker and client code is converted when the tool can tell it keeps its behaviour:
+
+- A worker becomes `run_worker` when it only runs until it is stopped and has no option that matters on
+  Mistral (`interceptors`, `plugins`, tuning...). Activities register themselves, and `task_queue` is
+  dropped because Mistral routes executions to deployments.
+- A client is converted function by function, and only when every use of it in that function is one of
+  the calls in the table above. Inputs follow Mistral's rule (a single pydantic model parameter is the
+  input itself, otherwise a dict of the parameters), and results come back as JSON values.
+- When the Temporal client has a `data_converter`, `plugins`, `interceptors` or `runtime`, neither its
+  worker nor its calls are converted.
+
+Everything else is reported with `T2M070` (worker) or `T2M071` (client).
+
 ## What you still have to do
 
 The tool reports these and leaves the code alone:
 
-- Worker and client code. `Worker(...)` becomes `await run_worker([...workflows])`, and activities are
-  registered automatically. Starting, signalling and querying workflows goes through the Mistral API
-  (`Mistral(api_key=...).workflows.execute_workflow(workflow_identifier=..., input={...})`). The report
-  points at each place and gives you the `run_worker` call.
-- Class-based activities (`execute_activity_method`) and activities defined inside a function.
-  Mistral activities are module-level functions. Use `Depends(...)` to share clients.
+- Worker and client code the tool cannot convert safely (see above). The report points at each place
+  and gives you the `run_worker` call or the Mistral API call to use.
+- Class-based activities whose class needs arguments to be built, and activities defined inside a
+  function. Mistral activities are module-level functions: use `Depends(...)` with a function that
+  builds the shared client.
 - `@workflow.init`, update validators, dynamic workflows and handlers, Nexus, asynchronous activity
   completion, and query or update handlers that return nothing.
 - Types with no JSON schema, such as plain classes that relied on a custom Temporal payload converter.
@@ -207,9 +224,9 @@ temporal2mistral check src --format json --report migration-report.json
 Some problems only show up when the code runs: forward references in input types, third-party types
 without a schema, and so on. With `--import-check`, each converted module is imported in a subprocess,
 from a converted copy of the project, with `mistralai-workflows` installed. Mistral validates
-definitions at import time, so anything it rejects is reported as `T2M090` with the SDK's own message.
-If the original module doesn't import either (a missing dependency, for example), it is skipped and
-reported as `T2M091`.
+definitions at import time, so anything it rejects is reported as `T2M090` with the SDK's own message,
+in the module where the error happens (often a workflow module imported by a worker). If the original
+module doesn't import either (a missing dependency, for example), it is skipped and reported as `T2M091`.
 
 Be aware that this runs your project's top-level code.
 
@@ -247,6 +264,7 @@ differently. Infos record what was changed.
 | T2M034 | info | Local activity converted to a regular activity |
 | T2M035 | warning | Activity chosen at runtime: call converted, options not moved |
 | T2M036 | error | Activities defined inside a function are not supported by Mistral |
+| T2M037 | info | Class-based activity converted to a module-level function using `Depends` |
 | T2M040 | info | Child workflow call converted to `workflow.execute_workflow` |
 | T2M041 | error | Child workflow target could not be resolved |
 | T2M042 | warning | Child workflow option has no Mistral equivalent and was dropped |
@@ -257,25 +275,26 @@ differently. Infos record what was changed.
 | T2M062 | error | Temporal API has no Mistral support (Nexus, async completion, ...) |
 | T2M070 | warning | Temporal `Worker` must be replaced by `run_worker` |
 | T2M071 | warning | Temporal client calls must be replaced by the Mistral API client |
+| T2M072 | info | Temporal `Worker` replaced by `run_worker` |
+| T2M073 | info | Temporal client calls converted to the Mistral API client |
 | T2M090 | error | The Mistral SDK rejects the converted module at import time |
 | T2M091 | info | Module not import-checked: the original does not import in this environment |
 
 ## Tested on temporalio/samples-python
 
 I test against Temporal's official [Python samples](https://github.com/temporalio/samples-python)
-(commit `b0e4d84`, 9 October 2026): 734 Python files outside `tests/`, 236 of which define workflows or
-activities.
+(commit `b0e4d84`, 9 October 2026): 734 Python files outside `tests/`.
 
 | | |
 |---|---:|
-| Modules converted | 236 |
+| Modules converted (workflows, activities, workers, starters) | 288 |
 | Converted modules that don't compile | 0 |
-| Modules importable here (dependencies installed) | 115 |
-| … accepted by `mistralai-workflows` 3.15 at import | 108 |
-| … with no error diagnostic, accepted by the SDK | 86 / 86 |
+| Modules importable here (dependencies installed) | 134 |
+| … accepted by `mistralai-workflows` 3.15 at import | 127 |
+| … with no error diagnostic, accepted by the SDK | 106 / 106 |
 | … rejected by the SDK with no error diagnostic | 0 |
 
-The other 121 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
+The other 154 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
 Strands, Google ADK, boto3...). They were converted but not import-checked. All 7 rejected modules
 already have error diagnostics: one uses a plain class as input (`T2M006`), one has an update handler
 that returns `None` (`T2M015`), and five have recursive or forward-referenced input types and were
@@ -285,10 +304,11 @@ already flagged for `@workflow.init` (`T2M012`) or a dynamic activity call (`T2M
 To reproduce: `python scripts/validate_corpus.py path/to/samples-python --out /tmp/converted`.
 The full list of errors on the samples is in [docs/samples-python-errors.txt](docs/samples-python-errors.txt).
 
-Two more tests go beyond imports. `tests/test_sdk_validation.py` runs a converted workflow (child
+More tests go beyond imports. `tests/test_sdk_validation.py` runs a converted workflow (child
 workflow, sync and async activities, retry policy, signal, query and update) in the Mistral SDK's local
-mode. `tests/test_e2e_temporal.py` runs one on Temporal's test server through the Mistral SDK's test
-worker. That one downloads the test server, so it runs in CI.
+mode, and runs converted client code against a fake Mistral API to check every request it sends.
+`tests/test_e2e_temporal.py` runs a converted workflow, with a class-based activity, on Temporal's test
+server through the Mistral SDK's test worker. That one downloads the test server, so it runs in CI.
 
 ## Development
 
@@ -303,10 +323,8 @@ ruff check . && ruff format src tests scripts
 
 ## Roadmap
 
-- Rewrite simple worker entry points to `run_worker([...])`.
-- Rewrite `client.execute_workflow(...)` and signal/query calls to the Mistral API client.
-- Turn class-based activities that only hold clients into module-level functions using `Depends`.
 - Optionally convert input dataclasses to pydantic models.
+- Convert class-based activities whose class takes arguments, when the worker builds it in an obvious way.
 
 ## License
 

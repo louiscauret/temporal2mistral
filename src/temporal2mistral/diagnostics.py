@@ -47,6 +47,7 @@ _ALL_RULES = [
     Rule("T2M034", Severity.INFO, "Local activity converted to a regular activity"),
     Rule("T2M035", Severity.WARNING, "Activity chosen at runtime: call converted, options not moved"),
     Rule("T2M036", Severity.ERROR, "Activities defined inside a function are not supported by Mistral"),
+    Rule("T2M037", Severity.INFO, "Class-based activity converted to a module-level function using `Depends`"),
     Rule("T2M040", Severity.INFO, "Child workflow call converted to `workflow.execute_workflow`"),
     Rule("T2M041", Severity.ERROR, "Child workflow target could not be resolved"),
     Rule("T2M042", Severity.WARNING, "Child workflow option has no Mistral equivalent and was dropped"),
@@ -57,6 +58,8 @@ _ALL_RULES = [
     Rule("T2M062", Severity.ERROR, "Temporal API has no Mistral support (Nexus, async completion, ...)"),
     Rule("T2M070", Severity.WARNING, "Temporal `Worker` must be replaced by `run_worker`"),
     Rule("T2M071", Severity.WARNING, "Temporal client calls must be replaced by the Mistral API client"),
+    Rule("T2M072", Severity.INFO, "Temporal `Worker` replaced by `run_worker`"),
+    Rule("T2M073", Severity.INFO, "Temporal client calls converted to the Mistral API client"),
     Rule("T2M090", Severity.ERROR, "The Mistral SDK rejects the converted module at import time"),
     Rule("T2M091", Severity.INFO, "Module not import-checked: the original does not import in this environment"),
 ]

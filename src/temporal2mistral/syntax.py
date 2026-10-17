@@ -112,3 +112,73 @@ def full_name(node: cst.BaseExpression, imports: dict[str, str]) -> str | None:
     first, _, rest = name.partition(".")
     base = imports.get(first, first)
     return f"{base}.{rest}" if rest else base
+
+
+class _NameUses(cst.CSTVisitor):
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.found: list[cst.Name] = []
+
+    def visit_Attribute(self, node: cst.Attribute) -> bool:
+        node.value.visit(self)  # in `x.client`, `client` is not the variable
+        return False
+
+    def visit_Arg(self, node: cst.Arg) -> bool:
+        node.value.visit(self)  # in `f(client=x)`, `client` is not the variable
+        return False
+
+    def visit_Param(self, node: cst.Param) -> bool:
+        if node.default is not None:
+            node.default.visit(self)
+        return False
+
+    def visit_Name(self, node: cst.Name) -> None:
+        if node.value == self.name:
+            self.found.append(node)
+
+
+def names_used(node: cst.CSTNode, name: str) -> list[cst.Name]:
+    """Every place ``node`` refers to the variable ``name`` (assignments included)."""
+    visitor = _NameUses(name)
+    node.visit(visitor)
+    return visitor.found
+
+
+class _Blocks(cst.CSTVisitor):
+    def __init__(self, function: cst.FunctionDef) -> None:
+        self.function = function
+        self.blocks: list[cst.IndentedBlock] = []
+
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+        return node is self.function  # nested functions are handled on their own
+
+    def visit_ClassDef(self, node: cst.ClassDef) -> bool:
+        return False
+
+    def visit_IndentedBlock(self, node: cst.IndentedBlock) -> None:
+        self.blocks.append(node)
+
+
+def statement_blocks(function: cst.FunctionDef) -> list[cst.IndentedBlock]:
+    """The blocks of statements of ``function`` (its body, and the bodies of its `if`, `try`...)."""
+    visitor = _Blocks(function)
+    function.visit(visitor)
+    return visitor.blocks
+
+
+def single_expression(statement: cst.BaseStatement) -> cst.BaseExpression | None:
+    """The expression of a statement line holding just one expression, such as `await worker.run()`."""
+    if isinstance(statement, cst.SimpleStatementLine) and len(statement.body) == 1:
+        small = statement.body[0]
+        if isinstance(small, cst.Expr):
+            return small.value
+    return None
+
+
+def single_assignment(statement: cst.BaseStatement) -> tuple[str, cst.BaseExpression] | None:
+    """`name = value` alone on its line, as (name, value)."""
+    if isinstance(statement, cst.SimpleStatementLine) and len(statement.body) == 1:
+        small = statement.body[0]
+        if isinstance(small, cst.Assign) and len(small.targets) == 1 and isinstance(small.targets[0].target, cst.Name):
+            return small.targets[0].target.value, small.value
+    return None

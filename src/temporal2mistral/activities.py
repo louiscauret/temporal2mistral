@@ -11,6 +11,9 @@ Mistral:
     async def compose_greeting(input: ComposeGreetingInput) -> str: ...
 
     await compose_greeting(x)
+
+An activity defined as a method becomes a module-level function when its class can be built
+without arguments; the function gets the instance through `Depends` (see _method_to_function).
 """
 
 from __future__ import annotations
@@ -20,8 +23,9 @@ import libcst as cst
 from .activity_options import decorator_options
 from .calls import read_temporal_call
 from .context import FileContext
+from .scan import Activity, Project
 from .signatures import check_signature
-from .syntax import code_of, keyword_args, positional_args, split_decorator, string_value
+from .syntax import code_of, dotted_name, keyword_args, positional_args, split_decorator, string_value
 
 # Call options that activity_options.py moves to the decorator, or that need no replacement
 MOVED_OR_IGNORED_OPTIONS = {
@@ -44,14 +48,16 @@ def rewrite_activity_definition(
     ctx.changed = True
     name = original.name.value
     original_decorator = original.decorators[decorator_index]
+    activity = ctx.project.activity_defined_at(str(ctx.path), name)
 
-    if is_method:
+    if is_method and (activity is None or not can_become_function(ctx.project, activity, original)):
         ctx.report(
             "T2M030",
             original_decorator,
             f"Activity method `{name}` is defined on a class",
             "Mistral activities are module-level `async def` functions: move it out of the class and inject "
-            "shared clients with `Depends(...)` (mistralai.workflows.Depends).",
+            "shared clients with `Depends(...)` (mistralai.workflows.Depends). This is done automatically "
+            "when the class can be built without arguments.",
         )
         return updated
     if is_nested:
@@ -64,6 +70,36 @@ def rewrite_activity_definition(
         )
         return updated
 
+    arguments = _decorator_arguments(ctx, original, original_decorator, activity)
+    ctx.need("mistralai.workflows", "activity")
+    if is_method:
+        return _method_to_function(ctx, original, updated, decorator_index, activity, arguments)
+
+    new_decorator = cst.parse_expression(f"activity({', '.join(arguments)})")
+    decorators = list(updated.decorators)
+    decorators[decorator_index] = decorators[decorator_index].with_changes(decorator=new_decorator)
+    updated = updated.with_changes(decorators=decorators)
+    updated = check_signature(ctx, original, updated, kind="activity", is_method=False)
+
+    if original.asynchronous is not None:
+        return updated
+    if ctx.options.sync_activities == "async":
+        ctx.report(
+            "T2M031",
+            original,
+            f"Synchronous activity `{name}` turned into `async def`",
+            "Blocking calls (time.sleep, requests, ...) now block the worker's event loop: "
+            "make them asynchronous or wrap them with `await asyncio.to_thread(...)`.",
+        )
+        return updated.with_changes(asynchronous=cst.Asynchronous())
+    return _run_in_thread(ctx, original, updated)
+
+
+def _decorator_arguments(
+    ctx: FileContext, original: cst.FunctionDef, original_decorator: cst.Decorator, activity: Activity | None
+) -> list[str]:
+    """The arguments of the new `@activity(...)`: the name, and the options of the calls."""
+    name = original.name.value
     _, decorator_call = split_decorator(original_decorator)
     arguments = []
     keywords = keyword_args(decorator_call)
@@ -86,34 +122,99 @@ def rewrite_activity_definition(
         elif keyword != "name":
             ctx.report("T2M023", original_decorator, f"`@activity.defn({keyword}=...)` dropped on `{name}`")
 
-    activity = ctx.project.activity_defined_at(str(ctx.path), name)
     calls = activity.calls if activity is not None else []
     options = decorator_options(name, calls, ctx.options.keep_unlimited_retries)
     for note in options.notes:
         ctx.report(note.code, original, note.message, note.hint)
     if options.uses_timedelta:
         ctx.need("datetime", "timedelta")
-    arguments += options.arguments
+    return arguments + options.arguments
 
-    ctx.need("mistralai.workflows", "activity")
-    new_decorator = cst.parse_expression(f"activity({', '.join(arguments)})")
-    decorators = list(updated.decorators)
-    decorators[decorator_index] = decorators[decorator_index].with_changes(decorator=new_decorator)
-    updated = updated.with_changes(decorators=decorators)
-    updated = check_signature(ctx, original, updated, kind="activity", is_method=False)
 
+def can_become_function(project: Project, activity: Activity, method: cst.FunctionDef | None = None) -> bool:
+    """Can this activity method become a module-level function? Its class must be built without
+    arguments (`Depends` calls it), and no other activity of the file may have the same name."""
+    if not activity.is_method or not activity.class_needs_no_arguments:
+        return False
+    if method is not None and method.params.star_kwarg is not None:
+        return False  # the instance parameter cannot come after `**kwargs`
+    same_name = [a for a in project.activities if a.path == activity.path and a.function == activity.function]
+    return len(same_name) == 1
+
+
+def _method_to_function(
+    ctx: FileContext,
+    original: cst.FunctionDef,
+    updated: cst.FunctionDef,
+    decorator_index: int,
+    activity: Activity,
+    arguments: list[str],
+) -> cst.FunctionDef:
+    """Keep the method, without its decorator, and add a module-level activity that calls it:
+
+        class BedrockActivities:
+            async def prompt_bedrock(self, prompt: str) -> str: ...
+
+        @activity(...)
+        async def prompt_bedrock(prompt: str, instance: BedrockActivities = Depends(BedrockActivities)) -> str:
+            return await instance.prompt_bedrock(prompt)
+
+    `Depends` builds the instance once per worker, so it is shared like it was on Temporal.
+    """
+    name = original.name.value
+    cls = activity.class_name
+    method = check_signature(ctx, original, updated, kind="activity", is_method=True)
+
+    params = original.params
+    if params.posonly_params:
+        params = params.with_changes(posonly_params=params.posonly_params[1:])  # drop `self`
+    else:
+        params = params.with_changes(params=params.params[1:])
+    taken = {param.name.value for param in [*params.posonly_params, *params.params, *params.kwonly_params]}
+    instance = "instance"
+    while instance in taken:
+        instance += "_"
+    instance_param = cst.parse_statement(f"def f({instance}: {cls} = Depends({cls})): pass").params.params[0]
+    if params.kwonly_params or isinstance(params.star_arg, cst.Param):
+        params = params.with_changes(kwonly_params=[*params.kwonly_params, instance_param])
+    else:
+        params = params.with_changes(params=[*params.params, instance_param])
+
+    forwarded = _forwarded_arguments(original.params, skip_first=True)
     if original.asynchronous is not None:
-        return updated
-    if ctx.options.sync_activities == "async":
-        ctx.report(
-            "T2M031",
-            original,
-            f"Synchronous activity `{name}` turned into `async def`",
-            "Blocking calls (time.sleep, requests, ...) now block the worker's event loop: "
-            "make them asynchronous or wrap them with `await asyncio.to_thread(...)`.",
-        )
-        return updated.with_changes(asynchronous=cst.Asynchronous())
-    return _run_in_thread(ctx, original, updated)
+        body = f"return await {instance}.{name}({', '.join(forwarded)})"
+    else:
+        ctx.need("asyncio")
+        body = f"return await asyncio.to_thread({', '.join([f'{instance}.{name}', *forwarded])})"
+    returns = f" -> {code_of(method.returns.annotation)}" if method.returns is not None else ""
+    function = cst.parse_statement(f"@activity({', '.join(arguments)})\nasync def {name}(){returns}:\n    {body}\n")
+    ctx.functions_after_class.setdefault(cls, []).append(function.with_changes(params=params))
+    ctx.need("mistralai.workflows", "Depends")
+    ctx.report(
+        "T2M037",
+        original,
+        f"Activity method `{cls}.{name}` is now the module-level activity `{name}`, "
+        f"which gets its `{cls}` instance through `Depends`",
+        "A worker builds the instance once and shares it, like the Temporal worker did "
+        "(the SDK's local mode builds one per call).",
+    )
+    decorators = [decorator for index, decorator in enumerate(method.decorators) if index != decorator_index]
+    return method.with_changes(decorators=decorators)
+
+
+def _forwarded_arguments(params: cst.Parameters, skip_first: bool = False) -> list[str]:
+    """The arguments that pass the parameters on: `a, *args, b=b, **kwargs`."""
+    positional = [*params.posonly_params, *params.params]
+    if skip_first:
+        positional = positional[1:]
+    arguments = [param.name.value for param in positional]
+    if isinstance(params.star_arg, cst.Param):
+        arguments.append("*" + params.star_arg.name.value)
+    for param in params.kwonly_params:
+        arguments.append(f"{param.name.value}={param.name.value}")
+    if params.star_kwarg is not None:
+        arguments.append("**" + params.star_kwarg.name.value)
+    return arguments
 
 
 def _run_in_thread(ctx: FileContext, original: cst.FunctionDef, updated: cst.FunctionDef) -> cst.FlattenSentinel:
@@ -131,16 +232,7 @@ def _run_in_thread(ctx: FileContext, original: cst.FunctionDef, updated: cst.Fun
     sync_function = updated.with_changes(name=cst.Name(sync_name), decorators=[])
 
     params = original.params
-    call_arguments = [sync_name]
-    for param in list(params.posonly_params) + list(params.params):
-        call_arguments.append(param.name.value)
-    if isinstance(params.star_arg, cst.Param):
-        call_arguments.append("*" + params.star_arg.name.value)
-    for param in params.kwonly_params:
-        call_arguments.append(f"{param.name.value}={param.name.value}")
-    if params.star_kwarg is not None:
-        call_arguments.append("**" + params.star_kwarg.name.value)
-
+    call_arguments = [sync_name, *_forwarded_arguments(params)]
     returns = f" -> {code_of(updated.returns.annotation)}" if updated.returns is not None else ""
     async_function = cst.parse_statement(
         f"async def {name}({code_of(params)}){returns}:\n"
@@ -172,7 +264,7 @@ def rewrite_activity_call(ctx: FileContext, original: cst.Call, updated: cst.Cal
         ctx.report("T2M032", original, f"`workflow.{api}` without an activity argument")
         return updated
 
-    callee = _callee(ctx, original, original_target, temporal_call.target)
+    callee = _callee(ctx, original, original_target, temporal_call.target, api)
     if callee is None:
         return updated
 
@@ -208,11 +300,17 @@ def rewrite_activity_call(ctx: FileContext, original: cst.Call, updated: cst.Cal
 
 
 def _callee(
-    ctx: FileContext, call: cst.Call, original_target: cst.BaseExpression, updated_target: cst.BaseExpression
+    ctx: FileContext,
+    call: cst.Call,
+    original_target: cst.BaseExpression,
+    updated_target: cst.BaseExpression,
+    api: str,
 ) -> str | None:
     """The code to call the activity with, or None (and a diagnostic) when the call must stay as is."""
     path = str(ctx.path)
     target_code = code_of(original_target)
+    if api.endswith("_method"):
+        return _method_callee(ctx, call, original_target)
 
     activity_name = string_value(original_target)
     if activity_name is not None:
@@ -272,3 +370,26 @@ def _callee(
         "If it comes from another package, convert that package too or wrap it in a Mistral `@activity`.",
     )
     return None
+
+
+def _method_callee(ctx: FileContext, call: cst.Call, target: cst.BaseExpression) -> str | None:
+    """For `execute_activity_method(MyActivities.do, ...)`: the module-level function that replaced
+    the method (see _method_to_function), imported when the class comes from another module."""
+    target_name = ctx.full_name(target)
+    written = (dotted_name(target) or "").split(".")
+    found = ctx.project.find_method_activities(target_name, str(ctx.path)) if target_name else []
+    if len(found) != 1 or not can_become_function(ctx.project, found[0]) or len(written) < 2:
+        ctx.report(
+            "T2M030",
+            call,
+            f"`{code_of(target)}` is a class-based activity",
+            "Move it to a module-level `async def` decorated with `@activity(...)` and call it directly.",
+        )
+        return None
+    function = found[0].function
+    if len(written) > 2:
+        return ".".join([*written[:-2], function])  # `activities.MyActivities.do` -> `activities.do`
+    imported_from = ctx.imports.get(written[0])  # where `MyActivities` comes from, e.g. `.activities.MyActivities`
+    if imported_from is not None:
+        ctx.need(imported_from.rpartition(".")[0], function)
+    return function

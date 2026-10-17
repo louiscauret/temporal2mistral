@@ -383,6 +383,9 @@ def test_unsupported_features_are_reported(convert):
                     pass
 
                 class MyActivities:
+                    def __init__(self, db) -> None:
+                        self.db = db
+
                     @activity.defn
                     async def do(self) -> None: ...
 
@@ -568,6 +571,153 @@ def test_invalid_duration_is_a_usage_error(tmp_path, capsys):
         main(["check", str(tmp_path), "--execution-timeout", "soon"])
     assert exit_info.value.code == 2
     assert "invalid duration 'soon'" in capsys.readouterr().err
+
+
+WORKFLOW_FILE = """
+from temporalio import workflow
+
+@workflow.defn
+class W:
+    @workflow.run
+    async def run(self, name: str) -> str:
+        return name
+
+    @workflow.signal
+    async def approve(self, approver: str) -> None:
+        self.approver = approver
+
+    @workflow.query
+    def status(self) -> str:
+        return "ok"
+"""
+
+
+def test_worker_entry_points_become_run_worker(convert):
+    out = convert(
+        {
+            "w.py": WORKFLOW_FILE,
+            "worker.py": """
+                import asyncio
+                from temporalio.client import Client
+                from temporalio.worker import Worker
+                from w import W
+
+                async def main(interrupt_event: asyncio.Event) -> None:
+                    client = await Client.connect("localhost:7233")
+                    async with Worker(client, task_queue="q", workflows=[W]):
+                        # Wait until interrupted
+                        print("Worker started, ctrl+c to exit")
+                        await interrupt_event.wait()
+                        print("Shutting down")
+
+                async def other() -> None:
+                    client = await Client.connect("localhost:7233")
+                    worker = Worker(client, task_queue="q", workflows=[W], activities=[])
+                    print("starting")
+                    await worker.run()
+            """,
+        }
+    )
+    src = out.files["worker.py"]
+    assert "Client.connect" not in src
+    assert "Worker(" not in src
+    assert src.count("await run_worker([W])") == 2
+    assert '    # Wait until interrupted\n    print("Worker started, ctrl+c to exit")\n    await run_worker([W])' in src
+    assert '    print("starting")\n    await run_worker([W])' in src
+    assert "from mistralai.workflows import run_worker" in src
+    assert out.codes().count("T2M072") == 2
+    assert "T2M070" not in out.codes() and "T2M071" not in out.codes()
+
+
+def test_workers_that_need_a_decision_are_reported(convert):
+    out = convert(
+        {
+            "w.py": WORKFLOW_FILE,
+            "worker.py": """
+                from temporalio.client import Client
+                from temporalio.worker import Worker
+                from w import W
+
+                async def with_plugins(plugin) -> None:
+                    client = await Client.connect("localhost:7233", plugins=[plugin])
+                    await Worker(client, task_queue="q", workflows=[W]).run()
+
+                async def with_interceptors(client: Client, interceptor) -> None:
+                    await Worker(client, task_queue="q", workflows=[W], interceptors=[interceptor]).run()
+
+                async def starter(client: Client) -> None:
+                    async with Worker(client, task_queue="q", workflows=[W]):
+                        await client.execute_workflow(W.run, "x", id="x", task_queue="q")
+            """,
+        }
+    )
+    assert out.files["worker.py"].count("Worker(") == 3
+    assert out.codes().count("T2M070") == 3
+    assert "T2M072" not in out.codes()
+
+
+def test_client_with_a_use_that_cannot_be_converted_is_left_as_is(convert):
+    out = convert(
+        {
+            "w.py": WORKFLOW_FILE,
+            "starter.py": """
+                from temporalio.client import Client
+                from w import W
+
+                async def main() -> None:
+                    client = await Client.connect("localhost:7233")
+                    handle = await client.start_workflow(W.run, "x", id="x", task_queue="q")
+                    await handle.signal(W.approve, "Louis")
+                    print(await handle.describe())
+            """,
+        }
+    )
+    assert "await Client.connect(" in out.files["starter.py"]
+    assert "await handle.signal(W.approve" in out.files["starter.py"]
+    assert "T2M071" in out.codes() and "T2M073" not in out.codes()
+
+
+def test_class_based_activity_built_without_arguments_becomes_a_function(convert):
+    out = convert(
+        {
+            "app/__init__.py": "",
+            "app/activities.py": """
+                from temporalio import activity
+
+                class Bedrock:
+                    def __init__(self) -> None:
+                        self.client = object()
+
+                    @activity.defn
+                    async def prompt(self, text: str) -> str:
+                        return text
+            """,
+            "app/workflows.py": """
+                from datetime import timedelta
+                from temporalio import workflow
+                from .activities import Bedrock
+
+                @workflow.defn
+                class W:
+                    @workflow.run
+                    async def run(self, text: str) -> str:
+                        return await workflow.execute_activity_method(
+                            Bedrock.prompt, text, start_to_close_timeout=timedelta(seconds=20)
+                        )
+            """,
+        }
+    )
+    activities = out.files["app/activities.py"]
+    assert "    async def prompt(self, text: str) -> str:" in activities  # the method stays, undecorated
+    assert (
+        "@activity(start_to_close_timeout=timedelta(seconds=20), retry_policy_max_attempts=0)\n"
+        "async def prompt(text: str, instance: Bedrock = Depends(Bedrock)) -> str:\n"
+        "    return await instance.prompt(text)\n"
+    ) in activities
+    workflows = out.files["app/workflows.py"]
+    assert "from .activities import prompt" in workflows
+    assert "return await prompt(text)" in workflows
+    assert "T2M037" in out.codes() and "T2M030" not in out.codes()
 
 
 def test_every_converted_file_parses(convert):

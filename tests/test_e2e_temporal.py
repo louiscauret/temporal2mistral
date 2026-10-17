@@ -39,11 +39,29 @@ def compose_greeting(input: ComposeGreetingInput) -> str:
     return f"{input.greeting}, {input.name}!"
 
 
+# A class-based activity: converted to a module-level activity that gets the instance with Depends
+class Punctuation:
+    instances = 0
+
+    def __init__(self) -> None:
+        Punctuation.instances += 1
+        self.mark = "!"
+
+    @activity.defn
+    async def emphasize(self, text: str) -> str:
+        return text + self.mark
+
+
 @workflow.defn
 class E2EChildWorkflow:
     @workflow.run
     async def run(self, input: ComposeGreetingInput) -> str:
-        return await workflow.execute_activity(compose_greeting, input, start_to_close_timeout=timedelta(seconds=10))
+        text = await workflow.execute_activity(compose_greeting, input, start_to_close_timeout=timedelta(seconds=10))
+        for _ in range(2):
+            text = await workflow.execute_activity_method(
+                Punctuation.emphasize, text, start_to_close_timeout=timedelta(seconds=10)
+            )
+        return text
 
 
 @workflow.defn
@@ -132,4 +150,5 @@ async def test_signal_child_and_activity_on_temporal(converted_module, monkeypat
             await handle.signal("approve", {})
             result = await asyncio.wait_for(handle.result(), timeout=60)  # fail instead of hanging forever
     value = result["result"] if isinstance(result, dict) and "result" in result else result
-    assert value == "Hello, Louis!"
+    assert value == "Hello, Louis!!!"
+    assert m.Punctuation.instances == 1  # one instance for the worker, as on Temporal

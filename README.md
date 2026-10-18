@@ -1,7 +1,7 @@
 # temporal2mistral
 
 [![CI](https://github.com/louiscauret/temporal2mistral/actions/workflows/ci.yml/badge.svg)](https://github.com/louiscauret/temporal2mistral/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/temporal2mistral?color=3776AB)](https://pypi.org/project/temporal2mistral/)
+[![PyPI](https://img.shields.io/pypi/v/temporal2mistral?label=pypi&color=3776AB)](https://pypi.org/project/temporal2mistral/)
 ![Python](https://img.shields.io/badge/python-3.12%20|%203.13%20|%203.14-3776AB?logo=python&logoColor=white)
 ![Temporal](https://img.shields.io/badge/temporalio-1.29-141414?logo=temporal&logoColor=white)
 ![Mistral Workflows](https://img.shields.io/badge/mistralai--workflows-3.15-FA520F?logo=mistralai&logoColor=white)

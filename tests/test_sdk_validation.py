@@ -224,7 +224,7 @@ async def main() -> list:
 # Runs a starter against a fake Mistral API that records the requests it receives.
 CLIENT_RUNNER = """
 import asyncio, json, sys
-import httpx
+import httpx2 as httpx
 import mistralai.client
 
 sys.path.insert(0, sys.argv[1])

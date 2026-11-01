@@ -28,7 +28,7 @@ dependencies = ["libcst>=1.8.5"]  # first release with Python 3.14 wheels
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.23"]
 # Needed only to validate converted code against the real Mistral SDK (tests/test_sdk_validation.py)
-mistral = ["mistralai-workflows>=3.15"]
+mistral = ["mistralai-workflows>=3.17"]
 
 [project.urls]
 Homepage = "https://github.com/louiscauret/temporal2mistral"

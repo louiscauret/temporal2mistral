@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/temporal2mistral?label=pypi&color=3776AB)](https://pypi.org/project/temporal2mistral/)
 ![Python](https://img.shields.io/badge/python-3.12%20|%203.13%20|%203.14-3776AB?logo=python&logoColor=white)
 ![Temporal](https://img.shields.io/badge/temporalio-1.29-141414?logo=temporal&logoColor=white)
-![Mistral Workflows](https://img.shields.io/badge/mistralai--workflows-3.15-FA520F?logo=mistralai&logoColor=white)
+![Mistral Workflows](https://img.shields.io/badge/mistralai--workflows-3.17-FA520F?logo=mistralai&logoColor=white)
 ![LibCST](https://img.shields.io/badge/built%20with-LibCST-4B8BBE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
@@ -21,7 +21,7 @@ $ temporal2mistral apply ./src --diff    # show the rewrite
 $ temporal2mistral apply ./src           # rewrite in place (commit first)
 ```
 
-Alpha. Tested against `temporalio` 1.29 and `mistralai-workflows` 3.15. Mistral Workflows is in public
+Alpha. Tested against `temporalio` 1.29 and `mistralai-workflows` 3.17. Mistral Workflows is in public
 preview, so its API can still move. This project is not affiliated with Temporal Technologies or Mistral AI.
 
 ## Why not search and replace?
@@ -364,18 +364,18 @@ differently. Infos record what was changed.
 ## Tested on temporalio/samples-python
 
 I test against Temporal's official [Python samples](https://github.com/temporalio/samples-python)
-(commit `b0e4d84`, 9 October 2026): 734 Python files outside `tests/`.
+(commit `6e48768`, 30 October 2026): 741 Python files outside `tests/`.
 
 | | |
 |---|---:|
-| Modules converted (workflows, activities, workers) | 259 |
+| Modules converted (workflows, activities, workers) | 261 |
 | Converted modules that don't compile | 0 |
 | Modules importable here (dependencies installed) | 130 |
-| … accepted by `mistralai-workflows` 3.15 at import | 123 |
+| … accepted by `mistralai-workflows` 3.17 at import | 123 |
 | … with no error diagnostic, accepted by the SDK | 102 / 102 |
 | … rejected by the SDK with no error diagnostic | 0 |
 
-The other 129 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
+The other 131 modules need optional integrations that weren't installed (OpenAI Agents, LangGraph,
 Strands, Google ADK, boto3...). They were converted but not import-checked. All 7 rejected modules
 already have error diagnostics: one uses a plain class as input (`T2M006`), one has an update handler
 that returns `None` (`T2M015`), and five have recursive or forward-referenced input types and were
